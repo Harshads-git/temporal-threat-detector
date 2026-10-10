@@ -21,6 +21,7 @@ import json
 
 from api.schemas import (
     AttackType,
+    BurstMode,
     CloudTelemetryLog,
     HttpMethod,
     UserAgentCategory,
@@ -82,6 +83,48 @@ class SyntheticTelemetryGenerator:
         # Scale between 0.25 and 1.75
         multiplier = 1.0 + (0.75 * cycle)
         return max(0.15, multiplier)
+
+    def calculate_burst_multiplier(
+        self,
+        burst_mode: BurstMode,
+        progress_ratio: float,
+        jitter_pct: float = 0.15,
+    ) -> float:
+        """Calculate dynamic amplification multiplier according to temporal burst profile.
+
+        Args:
+            burst_mode: Profile shape (CONSTANT, SUDDEN_SPIKE, GRADUAL_RAMP, PERIODIC_PULSES)
+            progress_ratio: Normalized progression of attack duration from 0.0 to 1.0
+            jitter_pct: Bounded stochastic noise percentage [0.0, 0.9]
+
+        Returns:
+            Calculated volume scaling multiplier.
+        """
+        t = max(0.0, min(1.0, progress_ratio))
+
+        if burst_mode == BurstMode.SUDDEN_SPIKE:
+            # Concentrated Gaussian impulse centered at t = 0.5 (std dev ~ 0.1)
+            sigma = 0.10
+            envelope = math.exp(-((t - 0.5) ** 2) / (2 * (sigma ** 2)))
+            base_multiplier = 0.2 + (3.3 * envelope)
+
+        elif burst_mode == BurstMode.GRADUAL_RAMP:
+            # Escalating curve from 0.2 to 2.5
+            base_multiplier = 0.2 + (2.3 * t)
+
+        elif burst_mode == BurstMode.PERIODIC_PULSES:
+            # Pulsing on/off periods (5 complete cycle pulses across duration)
+            pulse = math.sin(t * 10 * math.pi)
+            base_multiplier = 2.4 if pulse > 0.0 else 0.25
+
+        else:  # BurstMode.CONSTANT
+            base_multiplier = 1.0
+
+        if jitter_pct > 0.0:
+            jitter = random.uniform(1.0 - jitter_pct, 1.0 + jitter_pct)
+            base_multiplier *= jitter
+
+        return max(0.05, base_multiplier)
 
     def generate_baseline_event(
         self, current_time: datetime, is_synthetic: bool = False
@@ -293,15 +336,30 @@ class SyntheticTelemetryGenerator:
                 inj_dur = injection.get("duration_minutes", 1)
                 if inj_start <= minute_offset < (inj_start + inj_dur):
                     inj_type = injection.get("attack_type", AttackType.DDOS_HTTP_FLOOD)
-                    intensity = injection.get("intensity", 3.0)
-                    extra_rate = injection.get("extra_rate_per_min", 400) / 60.0
-                    num_attack_events = max(1, int(random.normalvariate(extra_rate, math.sqrt(extra_rate))))
+                    base_intensity = injection.get("intensity", 3.0)
+                    burst_mode = injection.get("burst_mode", BurstMode.CONSTANT)
+                    if isinstance(burst_mode, str):
+                        burst_mode = BurstMode(burst_mode)
+                    jitter_pct = injection.get("jitter_pct", 0.15)
+
+                    # Compute progress ratio through this injection phase
+                    elapsed_min = minute_offset - inj_start
+                    progress = elapsed_min / max(1.0, float(inj_dur))
+                    burst_factor = self.calculate_burst_multiplier(
+                        burst_mode=burst_mode,
+                        progress_ratio=progress,
+                        jitter_pct=jitter_pct,
+                    )
+                    effective_intensity = base_intensity * burst_factor
+
+                    extra_rate = (injection.get("extra_rate_per_min", 400) * burst_factor) / 60.0
+                    num_attack_events = max(1, int(random.normalvariate(extra_rate, math.sqrt(max(0.1, extra_rate)))))
 
                     for _ in range(num_attack_events):
                         yield self.generate_attack_event(
                             attack_type=inj_type,
                             current_time=current_sec_time,
-                            intensity=intensity,
+                            intensity=effective_intensity,
                             target_endpoint=injection.get("target_endpoint"),
                         )
 
@@ -311,8 +369,11 @@ class SyntheticTelemetryGenerator:
         start_time: Optional[datetime] = None,
         inject_attack: Optional[AttackType] = None,
         attack_ratio: float = 0.25,
+        intensity: float = 3.5,
+        burst_mode: BurstMode = BurstMode.CONSTANT,
+        jitter_pct: float = 0.15,
     ) -> List[CloudTelemetryLog]:
-        """Generate a fixed-size batch of events, optionally blending an injected attack."""
+        """Generate a fixed-size batch of events, optionally blending an injected attack with burst shaping."""
         start_time = start_time or (datetime.now(timezone.utc) - timedelta(hours=1))
         events: List[CloudTelemetryLog] = []
 
@@ -327,14 +388,22 @@ class SyntheticTelemetryGenerator:
             events.append(self.generate_baseline_event(current))
             current += time_step
 
-        # Generate injected attack events if requested
+        # Generate injected attack events if requested with burst shaping
         if inject_attack:
-            for _ in range(attack_count):
+            for i in range(attack_count):
+                progress = i / max(1.0, float(attack_count - 1))
+                burst_factor = self.calculate_burst_multiplier(
+                    burst_mode=burst_mode,
+                    progress_ratio=progress,
+                    jitter_pct=jitter_pct,
+                )
+                effective_intensity = intensity * burst_factor
+
                 events.append(
                     self.generate_attack_event(
                         attack_type=inject_attack,
                         current_time=current,
-                        intensity=3.5,
+                        intensity=effective_intensity,
                     )
                 )
                 current += timedelta(milliseconds=random.randint(50, 400))

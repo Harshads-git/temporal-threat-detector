@@ -40,6 +40,13 @@ class AttackType(str, Enum):
     DATA_EXFILTRATION = "DATA_EXFILTRATION"
 
 
+class BurstMode(str, Enum):
+    CONSTANT = "CONSTANT"
+    SUDDEN_SPIKE = "SUDDEN_SPIKE"
+    GRADUAL_RAMP = "GRADUAL_RAMP"
+    PERIODIC_PULSES = "PERIODIC_PULSES"
+
+
 class DetectorTier(str, Enum):
     TIER1_STATISTICAL_ZSCORE = "TIER1_STATISTICAL_ZSCORE"
     TIER1_STATISTICAL_EWMA = "TIER1_STATISTICAL_EWMA"
@@ -285,6 +292,16 @@ class AttackInjectionConfig(BaseModel):
         ge=1.0,
         le=50.0,
         description="Volume/anomaly magnitude amplification factor",
+    )
+    burst_mode: BurstMode = Field(
+        default=BurstMode.CONSTANT,
+        description="Temporal shape profile of the injected volume (CONSTANT, SUDDEN_SPIKE, GRADUAL_RAMP, PERIODIC_PULSES)",
+    )
+    jitter_pct: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=0.9,
+        description="Random stochastic noise jitter percentage applied to intervals",
     )
     target_endpoint: Optional[str] = Field(
         default=None,
