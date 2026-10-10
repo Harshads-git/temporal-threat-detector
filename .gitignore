@@ -8,3 +8,5 @@ htmlcov/
 .venv
 venv/
 *.log
+data/benchmarks/
+*.jsonl

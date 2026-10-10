@@ -15,9 +15,12 @@ from datetime import datetime, timedelta, timezone
 import math
 import random
 import uuid
-from typing import Generator, List, Optional
+from typing import Callable, Generator, List, Optional
 import argparse
+import csv
 import json
+import os
+from pathlib import Path
 
 from api.schemas import (
     AttackType,
@@ -421,6 +424,144 @@ class SyntheticTelemetryGenerator:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         return df
 
+    def export_dataset_jsonl(self, filepath: str, events: List[CloudTelemetryLog]) -> int:
+        """Export events to JSON Lines (JSONL) format for cloud log ingestion.
+
+        Args:
+            filepath: Destination file path.
+            events: List of telemetry event models.
+
+        Returns:
+            Number of written records.
+        """
+        path = Path(filepath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            for event in events:
+                f.write(json.dumps(event.model_dump(), default=str) + "\n")
+        return len(events)
+
+    def export_dataset_csv(self, filepath: str, events: List[CloudTelemetryLog]) -> int:
+        """Export events to flat CSV format for analytics and scikit-learn training.
+
+        Args:
+            filepath: Destination CSV path.
+            events: List of telemetry event models.
+
+        Returns:
+            Number of written records.
+        """
+        if not events:
+            return 0
+        path = Path(filepath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        fieldnames = list(events[0].model_dump().keys())
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for event in events:
+                writer.writerow(event.model_dump(mode="json"))
+        return len(events)
+
+    def export_benchmark_suite(
+        self,
+        output_dir: str,
+        count: int = 1000,
+        inject_attack: Optional[AttackType] = None,
+        attack_ratio: float = 0.25,
+        burst_mode: BurstMode = BurstMode.CONSTANT,
+        intensity: float = 3.5,
+        jitter_pct: float = 0.15,
+    ) -> dict:
+        """Generate a complete labeled benchmark dataset with JSONL, CSV, and manifest.json.
+
+        Used for faculty demonstrations, model training benchmarks, and Viva defense evaluation.
+        """
+        out_path = Path(output_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        events = self.generate_batch(
+            count=count,
+            inject_attack=inject_attack,
+            attack_ratio=attack_ratio,
+            intensity=intensity,
+            burst_mode=burst_mode,
+            jitter_pct=jitter_pct,
+        )
+
+        jsonl_file = out_path / "telemetry_stream.jsonl"
+        csv_file = out_path / "telemetry_stream.csv"
+        manifest_file = out_path / "manifest.json"
+
+        self.export_dataset_jsonl(str(jsonl_file), events)
+        self.export_dataset_csv(str(csv_file), events)
+
+        # Build ground-truth validation manifest
+        attack_indices = [i for i, e in enumerate(events) if e.is_synthetic_attack]
+        durations = [e.duration_ms for e in events]
+        bytes_out = [e.response_bytes for e in events]
+        error_count = sum(1 for e in events if e.status_code >= 400)
+
+        manifest = {
+            "dataset_id": str(uuid.uuid4()),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "record_count": len(events),
+            "baseline_count": len(events) - len(attack_indices),
+            "attack_count": len(attack_indices),
+            "attack_ratio": round(len(attack_indices) / max(1, len(events)), 4),
+            "injected_attack_type": inject_attack.value if inject_attack else None,
+            "burst_mode": burst_mode.value,
+            "intensity_multiplier": intensity,
+            "jitter_pct": jitter_pct,
+            "ground_truth_anomalous_indices": attack_indices,
+            "temporal_bounds": {
+                "start": events[0].timestamp.isoformat() if events else None,
+                "end": events[-1].timestamp.isoformat() if events else None,
+            },
+            "summary_metrics": {
+                "mean_duration_ms": round(sum(durations) / max(1, len(durations)), 2),
+                "total_response_bytes": sum(bytes_out),
+                "error_rate": round(error_count / max(1, len(events)), 4),
+            },
+            "files": {
+                "jsonl": str(jsonl_file.name),
+                "csv": str(csv_file.name),
+            },
+        }
+
+        with open(manifest_file, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+
+        return manifest
+
+    def stream_realtime_events(
+        self,
+        events: List[CloudTelemetryLog],
+        speed_multiplier: float = 1.0,
+        max_delay_seconds: float = 1.0,
+        on_event: Optional[Callable[[CloudTelemetryLog], None]] = None,
+    ) -> Generator[CloudTelemetryLog, None, None]:
+        """Stream telemetry events sequentially with time-scaled pacing for live visualizer replay.
+
+        Args:
+            events: Sequence of events sorted chronologically.
+            speed_multiplier: Replay acceleration factor (e.g. 5.0 = 5x speed).
+            max_delay_seconds: Upper cap on inter-arrival delay sleep.
+            on_event: Optional callback executed as each record is yielded.
+        """
+        import time
+
+        for i, event in enumerate(events):
+            if i > 0 and speed_multiplier > 0:
+                delta = (event.timestamp - events[i - 1].timestamp).total_seconds()
+                scaled_delay = max(0.0, delta / speed_multiplier)
+                time.sleep(min(scaled_delay, max_delay_seconds))
+
+            if on_event:
+                on_event(event)
+            yield event
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate synthetic cloud telemetry.")
@@ -432,7 +573,17 @@ if __name__ == "__main__":
         choices=["none", "ddos", "credential_stuffing", "off_hour", "data_exfil"],
         help="Attack injection scenario",
     )
+    parser.add_argument(
+        "--burst-mode",
+        type=str,
+        default="constant",
+        choices=["constant", "sudden_spike", "gradual_ramp", "periodic_pulses"],
+        help="Temporal burst profile shape",
+    )
+    parser.add_argument("--intensity", type=float, default=3.5, help="Anomaly intensity multiplier")
+    parser.add_argument("--jitter", type=float, default=0.15, help="Stochastic jitter noise factor")
     parser.add_argument("--out", type=str, default="", help="Optional JSONL file output path")
+    parser.add_argument("--export-dir", type=str, default="", help="Export complete labeled benchmark suite directory")
     args = parser.parse_args()
 
     attack_map = {
@@ -443,16 +594,41 @@ if __name__ == "__main__":
         "none": None,
     }
 
+    burst_map = {
+        "constant": BurstMode.CONSTANT,
+        "sudden_spike": BurstMode.SUDDEN_SPIKE,
+        "gradual_ramp": BurstMode.GRADUAL_RAMP,
+        "periodic_pulses": BurstMode.PERIODIC_PULSES,
+    }
+
     generator = SyntheticTelemetryGenerator(seed=42)
     selected_attack = attack_map.get(args.attack)
-    batch = generator.generate_batch(count=args.count, inject_attack=selected_attack)
+    selected_burst = burst_map.get(args.burst_mode, BurstMode.CONSTANT)
 
-    print(f"Generated {len(batch)} telemetry events. Injected attack: {args.attack}")
-    sample = batch[0]
-    print(f"Sample Event: ID={sample.event_id} Time={sample.timestamp} IP={sample.source_ip} Path={sample.endpoint} Status={sample.status_code}")
+    if args.export_dir:
+        manifest = generator.export_benchmark_suite(
+            output_dir=args.export_dir,
+            count=args.count,
+            inject_attack=selected_attack,
+            attack_ratio=0.25 if selected_attack else 0.0,
+            burst_mode=selected_burst,
+            intensity=args.intensity,
+            jitter_pct=args.jitter,
+        )
+        print(f"Benchmark suite exported to: {args.export_dir}")
+        print(f"Manifest: Total={manifest['record_count']}, Baseline={manifest['baseline_count']}, Attacks={manifest['attack_count']}")
+    else:
+        batch = generator.generate_batch(
+            count=args.count,
+            inject_attack=selected_attack,
+            burst_mode=selected_burst,
+            intensity=args.intensity,
+            jitter_pct=args.jitter,
+        )
+        print(f"Generated {len(batch)} telemetry events. Injected attack: {args.attack} (Burst: {args.burst_mode})")
+        sample = batch[0]
+        print(f"Sample Event: ID={sample.event_id} Time={sample.timestamp} IP={sample.source_ip} Path={sample.endpoint} Status={sample.status_code}")
 
-    if args.out:
-        with open(args.out, "w", encoding="utf-8") as f:
-            for item in batch:
-                f.write(json.dumps(item.model_dump(), default=str) + "\n")
-        print(f"Successfully saved records to {args.out}")
+        if args.out:
+            written = generator.export_dataset_jsonl(args.out, batch)
+            print(f"Successfully saved {written} records to {args.out}")
