@@ -3,7 +3,7 @@ REM ============================================================================
 REM Temporal Anomaly & Threat Detector - Windows Runner Script
 REM ==============================================================================
 echo ================================================================================
-echo  Starting Temporal Anomaly & Threat Detector Pipeline (Windows Demo)
+echo  Starting Temporal Anomaly ^& Threat Detector Pipeline (Windows Demo)
 echo ================================================================================
 
 python --version >nul 2>&1
@@ -13,8 +13,7 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-echo [*] Verifying dependencies...
-python -m pip install -r requirements.txt --quiet
+echo [*] Python environment ready.
 
 echo [*] Executing test suite for validation...
 python -m pytest tests/ -v
