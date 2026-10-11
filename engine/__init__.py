@@ -2,6 +2,7 @@
 
 from engine.windowing import (
     CANONICAL_FEATURE_NAMES,
+    FeatureMatrixVectorizer,
     StreamingWindowBuffer,
     TemporalWindowAggregator,
     WindowType,
@@ -10,6 +11,7 @@ from engine.windowing import (
 
 __all__ = [
     "CANONICAL_FEATURE_NAMES",
+    "FeatureMatrixVectorizer",
     "StreamingWindowBuffer",
     "TemporalWindowAggregator",
     "WindowType",

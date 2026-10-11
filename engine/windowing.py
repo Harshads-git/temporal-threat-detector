@@ -347,3 +347,91 @@ class StreamingWindowBuffer:
         """Flush buffer state."""
         self._buffer.clear()
         self._last_emitted_window_end = None
+
+
+class FeatureMatrixVectorizer:
+    """Vectorizer for converting WindowAggregate objects into structured ML feature matrices.
+
+    Maintains baseline mean and variance state for z-score scaling, and tracks feature distributions.
+    """
+
+    def __init__(self, feature_names: Optional[List[str]] = None) -> None:
+        self.feature_names = feature_names or list(CANONICAL_FEATURE_NAMES)
+        self.baseline_means: Optional[np.ndarray] = None
+        self.baseline_stds: Optional[np.ndarray] = None
+        self.feature_stats: Dict[str, Dict[str, float]] = {}
+
+    def fit_baseline(self, baseline_windows: List[WindowAggregate]) -> "FeatureMatrixVectorizer":
+        """Compute baseline statistical parameters (mean, std, percentiles) from reference windows."""
+        if not baseline_windows:
+            raise ValueError("Cannot fit baseline on empty window list.")
+
+        matrix = self.transform(baseline_windows)
+        self.baseline_means = np.mean(matrix, axis=0)
+        self.baseline_stds = np.std(matrix, axis=0)
+        # Prevent division by zero with minimum epsilon variance
+        self.baseline_stds = np.where(self.baseline_stds < 1e-6, 1.0, self.baseline_stds)
+
+        self.feature_stats = {}
+        for idx, col in enumerate(self.feature_names):
+            vals = matrix[:, idx]
+            self.feature_stats[col] = {
+                "mean": round(float(np.mean(vals)), 4),
+                "std": round(float(np.std(vals)), 4),
+                "min": round(float(np.min(vals)), 4),
+                "max": round(float(np.max(vals)), 4),
+                "p50": round(float(np.percentile(vals, 50)), 4),
+                "p95": round(float(np.percentile(vals, 95)), 4),
+            }
+        return self
+
+    def transform(self, windows: List[WindowAggregate]) -> np.ndarray:
+        """Convert windows into 2D numeric numpy array aligned with feature_names."""
+        if not windows:
+            return np.empty((0, len(self.feature_names)), dtype=np.float64)
+
+        rows = []
+        for w in windows:
+            fmap = w.to_feature_vector()
+            row = [fmap.get(col, 0.0) for col in self.feature_names]
+            rows.append(row)
+        return np.array(rows, dtype=np.float64)
+
+    def transform_single(self, window: WindowAggregate) -> np.ndarray:
+        """Convert a single WindowAggregate into a 1D feature array of shape (n_features,)."""
+        fmap = window.to_feature_vector()
+        return np.array([fmap.get(col, 0.0) for col in self.feature_names], dtype=np.float64)
+
+    def standardize(self, matrix: np.ndarray) -> np.ndarray:
+        """Standardize feature matrix using previously fitted baseline mean and std."""
+        if self.baseline_means is None or self.baseline_stds is None:
+            raise RuntimeError("Vectorizer must be fitted on baseline windows before standardizing.")
+        return (matrix - self.baseline_means) / self.baseline_stds
+
+    def to_dataframe(
+        self,
+        windows: List[WindowAggregate],
+        include_metadata: bool = True,
+    ) -> pd.DataFrame:
+        """Convert windows into Pandas DataFrame with optional window boundaries."""
+        if not windows:
+            cols = ["window_id", "window_start", "window_end"] + self.feature_names if include_metadata else self.feature_names
+            return pd.DataFrame(columns=cols)
+
+        data = []
+        for w in windows:
+            fmap = w.to_feature_vector()
+            row = {}
+            if include_metadata:
+                row["window_id"] = w.window_id
+                row["window_start"] = w.window_start
+                row["window_end"] = w.window_end
+            for col in self.feature_names:
+                row[col] = fmap.get(col, 0.0)
+            data.append(row)
+
+        df = pd.DataFrame(data)
+        if include_metadata:
+            df["window_start"] = pd.to_datetime(df["window_start"])
+            df["window_end"] = pd.to_datetime(df["window_end"])
+        return df
