@@ -242,11 +242,18 @@ class EWMAVolatilityTracker:
             )
 
         prev_mean, prev_var, prev_fast, prev_slow, count = self._state[metric_name]
+        prev_std = max(1e-4, math.sqrt(max(0.0, prev_var)))
 
-        # Update primary mean and variance
-        new_mean = (self.alpha * val) + ((1.0 - self.alpha) * prev_mean)
+        # Evaluate Upper and Lower Control Limits (UCL / LCL) against prior baseline
+        ucl = prev_mean + (self.control_limit_factor * prev_std)
+        lcl = max(0.0, prev_mean - (self.control_limit_factor * prev_std))
+        is_anomaly = val > ucl
+
+        # Update primary mean and variance (dampen update if anomaly to protect baseline)
+        effective_alpha = self.alpha * 0.2 if is_anomaly else self.alpha
+        new_mean = (effective_alpha * val) + ((1.0 - effective_alpha) * prev_mean)
         delta_sq = (val - new_mean) ** 2
-        new_var = (self.alpha * delta_sq) + ((1.0 - self.alpha) * prev_var)
+        new_var = (effective_alpha * delta_sq) + ((1.0 - effective_alpha) * prev_var)
         new_std = max(1e-4, math.sqrt(max(0.0, new_var)))
 
         # Update dual-horizon fast and slow estimators
@@ -257,13 +264,8 @@ class EWMAVolatilityTracker:
         # Update state
         self._state[metric_name] = (new_mean, new_var, new_fast, new_slow, count + 1)
 
-        # Upper and Lower Control Limits (UCL / LCL)
-        ucl = new_mean + (self.control_limit_factor * new_std)
-        lcl = max(0.0, new_mean - (self.control_limit_factor * new_std))
-
-        is_anomaly = val > ucl
         volatility_index = new_std / max(1e-3, abs(new_mean))
-        deviation_ratio = (val - new_mean) / new_std if new_std > 0 else 0.0
+        deviation_ratio = (val - prev_mean) / prev_std if prev_std > 0 else 0.0
 
         return EWMAResult(
             metric_name=metric_name,
