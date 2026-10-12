@@ -50,6 +50,7 @@ class EWMAResult:
     is_anomaly: bool
     volatility_index: float
     deviation_ratio: float
+    velocity_spread: float = 0.0  # Fast EWMA minus Slow EWMA indicating acceleration
 
 
 class SlidingWindowZScoreFilter:
@@ -191,19 +192,25 @@ class EWMAVolatilityTracker:
     def __init__(
         self,
         alpha: float = 0.20,
+        alpha_fast: float = 0.35,
+        alpha_slow: float = 0.08,
         control_limit_factor: float = 3.0,
     ) -> None:
         """Initialize EWMA filter.
 
         Args:
-            alpha: Exponential smoothing weight [0.01, 1.0]. Lower values give higher inertia.
+            alpha: Primary exponential smoothing weight [0.01, 1.0].
+            alpha_fast: Fast reaction coefficient for acceleration detection.
+            alpha_slow: Slow anchor baseline coefficient.
             control_limit_factor: Multiplier for standard deviation upper control limit (UCL).
         """
         self.alpha = min(1.0, max(0.01, float(alpha)))
+        self.alpha_fast = min(1.0, max(0.01, float(alpha_fast)))
+        self.alpha_slow = min(1.0, max(0.01, float(alpha_slow)))
         self.control_limit_factor = max(1.0, float(control_limit_factor))
 
-        # State tracking: metric_name -> (mean, variance, sample_count)
-        self._state: Dict[str, Tuple[float, float, int]] = {}
+        # State tracking: metric_name -> (mean, variance, fast_mean, slow_mean, sample_count)
+        self._state: Dict[str, Tuple[float, float, float, float, int]] = {}
 
     def update_and_evaluate(
         self,
@@ -215,11 +222,12 @@ class EWMAVolatilityTracker:
         Formula:
             mean_t = alpha * x_t + (1 - alpha) * mean_{t-1}
             var_t = alpha * (x_t - mean_t)^2 + (1 - alpha) * var_{t-1}
+            velocity = fast_mean_t - slow_mean_t
         """
         val = float(value)
 
         if metric_name not in self._state:
-            self._state[metric_name] = (val, 1.0, 1)
+            self._state[metric_name] = (val, 1.0, val, val, 1)
             return EWMAResult(
                 metric_name=metric_name,
                 observed_value=val,
@@ -230,18 +238,24 @@ class EWMAVolatilityTracker:
                 is_anomaly=False,
                 volatility_index=0.0,
                 deviation_ratio=0.0,
+                velocity_spread=0.0,
             )
 
-        prev_mean, prev_var, count = self._state[metric_name]
+        prev_mean, prev_var, prev_fast, prev_slow, count = self._state[metric_name]
 
-        # Update mean and variance
+        # Update primary mean and variance
         new_mean = (self.alpha * val) + ((1.0 - self.alpha) * prev_mean)
         delta_sq = (val - new_mean) ** 2
         new_var = (self.alpha * delta_sq) + ((1.0 - self.alpha) * prev_var)
         new_std = max(1e-4, math.sqrt(max(0.0, new_var)))
 
+        # Update dual-horizon fast and slow estimators
+        new_fast = (self.alpha_fast * val) + ((1.0 - self.alpha_fast) * prev_fast)
+        new_slow = (self.alpha_slow * val) + ((1.0 - self.alpha_slow) * prev_slow)
+        velocity_spread = new_fast - new_slow
+
         # Update state
-        self._state[metric_name] = (new_mean, new_var, count + 1)
+        self._state[metric_name] = (new_mean, new_var, new_fast, new_slow, count + 1)
 
         # Upper and Lower Control Limits (UCL / LCL)
         ucl = new_mean + (self.control_limit_factor * new_std)
@@ -261,6 +275,7 @@ class EWMAVolatilityTracker:
             is_anomaly=is_anomaly,
             volatility_index=round(volatility_index, 4),
             deviation_ratio=round(deviation_ratio, 4),
+            velocity_spread=round(velocity_spread, 4),
         )
 
     def reset(self) -> None:
@@ -353,10 +368,15 @@ class StatisticalFilterEngine:
 
         # Infer Threat Hypothesis based on primary violated metric
         hypothesis, narrative, mitigation = self._infer_threat_semantics(primary, window)
+        detector_tier = (
+            DetectorTier.TIER1_STATISTICAL_ZSCORE
+            if flagged_results
+            else DetectorTier.TIER1_STATISTICAL_EWMA
+        )
 
         return ThreatAlert(
             window_id=window.window_id,
-            detector_tier=DetectorTier.TIER1_STATISTICAL_ZSCORE,
+            detector_tier=detector_tier,
             severity=severity,
             confidence_score=confidence,
             anomaly_score=round(max_z, 2),
