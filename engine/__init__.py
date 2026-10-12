@@ -8,6 +8,13 @@ from engine.windowing import (
     WindowType,
     compute_window_features,
 )
+from engine.zscore_filter import (
+    EWMAResult,
+    EWMAVolatilityTracker,
+    SlidingWindowZScoreFilter,
+    StatisticalFilterEngine,
+    ZScoreAnomalyResult,
+)
 
 __all__ = [
     "CANONICAL_FEATURE_NAMES",
@@ -16,4 +23,9 @@ __all__ = [
     "TemporalWindowAggregator",
     "WindowType",
     "compute_window_features",
+    "SlidingWindowZScoreFilter",
+    "EWMAVolatilityTracker",
+    "StatisticalFilterEngine",
+    "ZScoreAnomalyResult",
+    "EWMAResult",
 ]
