@@ -71,6 +71,7 @@ class IsolationForestDetector:
         # Baseline reference statistics for feature deviation attribution
         self.baseline_means: Optional[np.ndarray] = None
         self.baseline_stds: Optional[np.ndarray] = None
+        self.empirical_threshold: float = 0.0
 
     def fit(self, windows: List[WindowAggregate]) -> "IsolationForestDetector":
         """Fit feature scaler and train Isolation Forest ensemble on baseline window aggregates."""
@@ -115,7 +116,7 @@ class IsolationForestDetector:
         # Decision function: negative values indicate anomaly, positive indicate normal
         raw_decision = float(self.model.decision_function(scaled_vec)[0])
         pred = int(self.model.predict(scaled_vec)[0])  # -1 for anomaly, 1 for inlier
-        is_anomaly = pred == -1
+        is_anomaly = (pred == -1) or (raw_decision <= self.empirical_threshold)
 
         # Calculate normalized anomaly score: 0.0 to 1.0 (higher = more anomalous)
         # decision_function typically lies in [-0.5, 0.5]
@@ -182,6 +183,7 @@ class IsolationForestDetector:
             "feature_names": self.feature_names,
             "baseline_means": self.baseline_means,
             "baseline_stds": self.baseline_stds,
+            "empirical_threshold": self.empirical_threshold,
             "contamination": self.contamination,
             "n_estimators": self.n_estimators,
             "saved_at": datetime.now(timezone.utc).isoformat(),
@@ -205,8 +207,27 @@ class IsolationForestDetector:
         detector.scaler = payload["scaler"]
         detector.baseline_means = payload["baseline_means"]
         detector.baseline_stds = payload["baseline_stds"]
+        detector.empirical_threshold = payload.get("empirical_threshold", 0.0)
         detector.is_fitted = True
         return detector
+
+
+    def calibrate_threshold(self, baseline_windows: List[WindowAggregate], target_fpr: float = 0.02) -> float:
+        """Calibrate empirical decision threshold against clean baseline data to achieve target false positive rate."""
+        if not self.is_fitted or self.model is None:
+            raise RuntimeError("Detector must be fitted before calibrating threshold.")
+
+        rows = []
+        for w in baseline_windows:
+            fmap = w.to_feature_vector()
+            rows.append([fmap.get(col, 0.0) for col in self.feature_names])
+        X = np.array(rows, dtype=np.float64)
+        X_scaled = self.scaler.transform(X)
+
+        raw_scores = self.model.decision_function(X_scaled)
+        # Select threshold at (1 - target_fpr) percentile of negative scores
+        self.empirical_threshold = float(np.percentile(raw_scores, target_fpr * 100))
+        return self.empirical_threshold
 
 
 def train_baseline_model(
@@ -215,28 +236,36 @@ def train_baseline_model(
     window_size_seconds: float = 60.0,
     hop_seconds: float = 10.0,
     contamination: float = 0.03,
-) -> Tuple[IsolationForestDetector, List[WindowAggregate]]:
-    """Generate diurnal baseline telemetry and train a baseline Isolation Forest detector."""
+) -> Tuple[IsolationForestDetector, dict]:
+    """Generate diurnal baseline telemetry and train a baseline Isolation Forest detector with validation metadata."""
     from data.synthetic_generator import SyntheticTelemetryGenerator
 
     generator = SyntheticTelemetryGenerator(seed=42)
-    # Generate clean baseline telemetry (no injected attacks)
     baseline_events = generator.generate_batch(count=n_baseline_events, inject_attack=None)
 
-    # Aggregate into temporal windows
     aggregator = TemporalWindowAggregator(
         window_size_seconds=window_size_seconds,
         hop_seconds=hop_seconds,
     )
     baseline_windows = aggregator.aggregate_batch(baseline_events)
 
-    # Train Isolation Forest
     detector = IsolationForestDetector(contamination=contamination)
     detector.fit(baseline_windows)
+    threshold = detector.calibrate_threshold(baseline_windows, target_fpr=contamination)
 
     # Persist artifact
     detector.save_model(output_model_path)
-    return detector, baseline_windows
+
+    metadata = {
+        "model_path": output_model_path,
+        "n_baseline_events": len(baseline_events),
+        "n_baseline_windows": len(baseline_windows),
+        "contamination": contamination,
+        "calibrated_threshold": round(threshold, 4),
+        "feature_count": len(detector.feature_names),
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return detector, metadata
 
 
 class HybridThreatEnsemble:
