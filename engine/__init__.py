@@ -1,5 +1,11 @@
 """Temporal Threat Detector Engine Package."""
 
+from engine.isolation_forest import (
+    HybridThreatEnsemble,
+    IsolationForestDetector,
+    IsolationForestResult,
+    train_baseline_model,
+)
 from engine.windowing import (
     CANONICAL_FEATURE_NAMES,
     FeatureMatrixVectorizer,
@@ -28,4 +34,8 @@ __all__ = [
     "StatisticalFilterEngine",
     "ZScoreAnomalyResult",
     "EWMAResult",
+    "IsolationForestDetector",
+    "IsolationForestResult",
+    "HybridThreatEnsemble",
+    "train_baseline_model",
 ]

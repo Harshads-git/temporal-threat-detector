@@ -10,3 +10,4 @@ venv/
 *.log
 data/benchmarks/
 *.jsonl
+models/*.joblib
