@@ -142,3 +142,97 @@ class ShapExplainerEngine:
             "observed_values": observed,
             "baseline_expected": baseline,
         }
+
+
+class SemanticReasoningEngine:
+    """Translates SHAP mathematical attributions and raw window metrics into semantic SOC threat hypotheses."""
+
+    @staticmethod
+    def infer_threat_semantics(
+        attributions: List[FeatureAttribution],
+        window: WindowAggregate,
+    ) -> Tuple[str, str]:
+        """Infer threat hypothesis category and plain-English narrative justification.
+
+        Args:
+            attributions: Rank-ordered SHAP feature importance attributions.
+            window: Full raw window metrics snapshot.
+
+        Returns:
+            Tuple of (threat_hypothesis, explanation_narrative).
+        """
+        if not attributions:
+            return (
+                "Unspecified Multivariate Anomaly",
+                "Workload feature vector deviated from normal multidimensional cluster, but individual feature impact was diffuse.",
+            )
+
+        top_feature = attributions[0].feature_name
+        top_obs = attributions[0].observed_value
+        top_exp = attributions[0].baseline_expected
+        top_shap = attributions[0].shap_value
+
+        # Calculate fold change / relative factor
+        fold_change = (top_obs / max(0.01, top_exp)) if top_exp > 0 else 1.0
+
+        # Secondary features set for contextual corroboration
+        top_names = {a.feature_name for a in attributions[:3]}
+
+        # 1. DDoS / Volumetric HTTP Flood
+        if top_feature in ("request_count", "request_rate_per_sec"):
+            hypothesis = "High Volumetric HTTP Flood (DDoS)"
+            narrative = (
+                f"SHAP attribution identifies {top_feature} as the primary driver (SHAP score +{top_shap:.3f}). "
+                f"Request traffic escalated to {top_obs:.0f} reqs ({fold_change:.1f}x higher than baseline of {top_exp:.1f}), "
+                f"originating across {window.unique_source_ips} distinct IPs with a {window.error_rate_5xx*100:.1f}% backend error rate."
+            )
+            return hypothesis, narrative
+
+        # 2. Credential Stuffing / Brute Force
+        if top_feature == "auth_failure_count" or ("error_rate_4xx" in top_names and window.auth_failure_count > 5):
+            hypothesis = "Distributed Credential Stuffing Campaign"
+            narrative = (
+                f"SHAP attribution isolates authentication anomalies (SHAP score +{top_shap:.3f}). "
+                f"Authorization failures surged to {window.auth_failure_count} (normal expected: {top_exp:.1f}), "
+                f"exhibiting a {window.bot_agent_ratio*100:.1f}% automated bot agent signature across auth endpoints."
+            )
+            return hypothesis, narrative
+
+        # 3. Off-Hour Reconnaissance / Admin Probing
+        if top_feature == "off_hour_ratio" or (window.off_hour_ratio > 0.4 and "error_rate_4xx" in top_names):
+            hypothesis = "Off-Hours Reconnaissance Probing"
+            narrative = (
+                f"SHAP TreeExplainer flagged temporal context anomaly (SHAP score +{top_shap:.3f}). "
+                f"Unusual API access during off-peak hours ({window.off_hour_ratio*100:.1f}% off-hour activity vs {top_exp*100:.1f}% expected), "
+                f"accompanied by elevated client errors ({window.error_count_4xx} 4xx status responses) targeting privileged paths."
+            )
+            return hypothesis, narrative
+
+        # 4. Privileged Data Exfiltration Surge
+        if top_feature in ("total_response_bytes", "mean_response_bytes"):
+            megabytes = window.total_response_bytes / (1024 * 1024)
+            hypothesis = "Privileged Data Exfiltration Surge"
+            narrative = (
+                f"SHAP attribution identified massive egress volume anomaly (SHAP score +{top_shap:.3f}). "
+                f"Outbound byte throughput spiked to {megabytes:.2f} MB ({fold_change:.1f}x historical average), "
+                f"suggesting bulk database dumping or unauthorized cloud storage exfiltration."
+            )
+            return hypothesis, narrative
+
+        # 5. Latency Degradation / Resource Exhaustion
+        if top_feature in ("mean_duration_ms", "p95_duration_ms"):
+            hypothesis = "Workload Latency Degradation / Service Saturation"
+            narrative = (
+                f"SHAP attribution detected severe processing latency regression (SHAP score +{top_shap:.3f}). "
+                f"P95 latency reached {window.p95_duration_ms:.1f}ms compared to normal baseline of {top_exp:.1f}ms, "
+                f"indicating CPU starvation or upstream database lock contention."
+            )
+            return hypothesis, narrative
+
+        # Default multivariate contextual fallback
+        hypothesis = f"Multivariate Anomaly Dominance: {top_feature}"
+        narrative = (
+            f"Isolation Forest identified significant behavioral departure driven primarily by {top_feature} "
+            f"(observed {top_obs:.2f} vs expected {top_exp:.2f}, SHAP score +{top_shap:.3f})."
+        )
+        return hypothesis, narrative

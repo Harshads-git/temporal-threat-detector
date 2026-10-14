@@ -1,6 +1,7 @@
 """Temporal Threat Detector Engine Package."""
 
 from engine.explainability import (
+    SemanticReasoningEngine,
     ShapExplainerEngine,
 )
 from engine.isolation_forest import (
@@ -42,4 +43,5 @@ __all__ = [
     "HybridThreatEnsemble",
     "train_baseline_model",
     "ShapExplainerEngine",
+    "SemanticReasoningEngine",
 ]
