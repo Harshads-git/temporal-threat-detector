@@ -1,6 +1,8 @@
 """Temporal Threat Detector Engine Package."""
 
 from engine.explainability import (
+    IncidentResponseRecommender,
+    MitigationPlaybook,
     SemanticReasoningEngine,
     ShapExplainerEngine,
 )
@@ -44,4 +46,6 @@ __all__ = [
     "train_baseline_model",
     "ShapExplainerEngine",
     "SemanticReasoningEngine",
+    "IncidentResponseRecommender",
+    "MitigationPlaybook",
 ]

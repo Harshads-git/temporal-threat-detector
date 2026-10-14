@@ -236,3 +236,102 @@ class SemanticReasoningEngine:
             f"(observed {top_obs:.2f} vs expected {top_exp:.2f}, SHAP score +{top_shap:.3f})."
         )
         return hypothesis, narrative
+
+
+@dataclass
+class MitigationPlaybook:
+    """Actionable cloud incident response playbook recommendation."""
+
+    playbook_id: str
+    threat_hypothesis: str
+    mitigation_summary: str
+    aws_services: List[str]
+    remediation_steps: List[str]
+    cli_template: str
+
+
+class IncidentResponseRecommender:
+    """Maps identified threat hypotheses and XAI attributions to operational cloud playbooks."""
+
+    PLAYBOOKS: Dict[str, MitigationPlaybook] = {
+        "High Volumetric HTTP Flood (DDoS)": MitigationPlaybook(
+            playbook_id="IR-AWS-DDOS-01",
+            threat_hypothesis="High Volumetric HTTP Flood (DDoS)",
+            mitigation_summary="Deploy AWS WAF rate-limiting rules and enable CloudFront edge caching.",
+            aws_services=["AWS WAF", "Amazon CloudFront", "Application Load Balancer"],
+            remediation_steps=[
+                "Apply rate-based rule on regional ALB WAF to throttle callers exceeding 1,000 req/5min.",
+                "Verify CloudFront DDoS protection (AWS Shield Standard/Advanced active).",
+                "Scale backend ECS/EKS replica targets to absorb transient saturation.",
+            ],
+            cli_template="aws wafv2 update-web-acl --name IngressWafAcl --scope REGIONAL --default-action Block={} ...",
+        ),
+        "Distributed Credential Stuffing Campaign": MitigationPlaybook(
+            playbook_id="IR-AWS-AUTH-02",
+            threat_hypothesis="Distributed Credential Stuffing Campaign",
+            mitigation_summary="Enforce adaptive challenge (CAPTCHA) on login endpoints and block abusive CIDRs.",
+            aws_services=["AWS WAF Bot Control", "Amazon Cognito", "AWS IAM"],
+            remediation_steps=[
+                "Enable AWS WAF Fraud Control / Bot Control managed rule group on /auth/login.",
+                "Enforce multi-factor authentication (MFA) step-up for repeatedly failing usernames.",
+                "Invalidate active refresh tokens for compromised identities.",
+            ],
+            cli_template="aws wafv2 update-ip-set --name AbusiveAuthIPs --addresses 185.220.101.0/24 ...",
+        ),
+        "Off-Hours Reconnaissance Probing": MitigationPlaybook(
+            playbook_id="IR-AWS-RECON-03",
+            threat_hypothesis="Off-Hours Reconnaissance Probing",
+            mitigation_summary="Restrict security group ingress to corporate VPN CIDRs and audit CloudTrail.",
+            aws_services=["Amazon VPC Security Groups", "AWS CloudTrail", "Amazon GuardDuty"],
+            remediation_steps=[
+                "Revoke 0.0.0.0/0 ingress on administrative ports in VPC Security Groups.",
+                "Search CloudTrail for GetCallerIdentity, ListRoles, and unauthorized Describe* API calls.",
+                "Deactivate active AWS STS temporary session tokens for suspected roles.",
+            ],
+            cli_template="aws ec2 revoke-security-group-ingress --group-id sg-0123456789 --protocol tcp --port 8080 ...",
+        ),
+        "Privileged Data Exfiltration Surge": MitigationPlaybook(
+            playbook_id="IR-AWS-EXFIL-04",
+            threat_hypothesis="Privileged Data Exfiltration Surge",
+            mitigation_summary="Apply emergency S3 Deny-All bucket policy and quarantine compromised IAM roles.",
+            aws_services=["Amazon S3", "AWS IAM", "Amazon Macie", "VPC Flow Logs"],
+            remediation_steps=[
+                "Attach AWS IAM Deny-All policy boundary to affected IAM principal.",
+                "Enable S3 Object Lock and review S3 Access Analyzer alerts for external exfiltration.",
+                "Check VPC Flow Logs for high outbound byte egress to unfamiliar external IP CIDRs.",
+            ],
+            cli_template="aws iam attach-user-policy --user-name compromised-admin --policy-arn arn:aws:iam::aws:policy/AWSDenyAll",
+        ),
+        "Workload Latency Degradation / Service Saturation": MitigationPlaybook(
+            playbook_id="IR-AWS-PERF-05",
+            threat_hypothesis="Workload Latency Degradation / Service Saturation",
+            mitigation_summary="Trigger emergency pod autoscaling and scale out RDS database read replicas.",
+            aws_services=["Amazon ECS / EKS", "Amazon Aurora / RDS", "AWS Auto Scaling"],
+            remediation_steps=[
+                "Trigger horizontal pod autoscaler (HPA) to spin up additional task containers.",
+                "Check Aurora/RDS CPU utilization and activate reader replica endpoints.",
+                "Inspect slow database query logs for deadlock and table lock contention.",
+            ],
+            cli_template="aws ecs update-service --cluster app-cluster --service api-svc --desired-count 15",
+        ),
+    }
+
+    @classmethod
+    def get_playbook(cls, threat_hypothesis: str) -> MitigationPlaybook:
+        """Fetch matching mitigation playbook or return generic containment fallback."""
+        for name, playbook in cls.PLAYBOOKS.items():
+            if name.lower() in threat_hypothesis.lower() or threat_hypothesis.lower() in name.lower():
+                return playbook
+
+        return MitigationPlaybook(
+            playbook_id="IR-AWS-GENERIC-99",
+            threat_hypothesis=threat_hypothesis,
+            mitigation_summary="Isolate anomalous workload component and review correlated cloud telemetry.",
+            aws_services=["AWS CloudWatch", "Amazon GuardDuty", "AWS Security Hub"],
+            remediation_steps=[
+                "Review correlated application and load balancer access logs.",
+                "Check AWS GuardDuty for unauthorized activity findings.",
+                "Apply rate limiting or temporary traffic throttling on ingress API gateway.",
+            ],
+            cli_template="aws guardduty get-findings --detector-id <detector-id> ...",
+        )
