@@ -74,3 +74,71 @@ class ShapExplainerEngine:
         shap_values_1d = np.ravel(shap_matrix)
 
         return shap_values_1d, raw_vec[0]
+
+    def explain_window(
+        self,
+        window: WindowAggregate,
+        top_k: int = 4,
+    ) -> List[FeatureAttribution]:
+        """Extract rank-ordered top-k feature importance attributions for a window.
+
+        Args:
+            window: Temporal window being investigated.
+            top_k: Number of highest-magnitude contributing features to return.
+
+        Returns:
+            List of FeatureAttribution objects sorted by absolute impact.
+        """
+        shap_values, raw_vals = self.compute_shap_values(window)
+        abs_shap = np.abs(shap_values)
+
+        # Rank indices by descending absolute contribution
+        ranked_indices = np.argsort(abs_shap)[::-1]
+
+        attributions: List[FeatureAttribution] = []
+        for rank, idx in enumerate(ranked_indices[:top_k], start=1):
+            feat_name = self.feature_names[idx]
+            obs_val = float(raw_vals[idx])
+            exp_val = float(self.baseline_unscaled_means[idx])
+            shap_val = float(shap_values[idx])
+
+            attributions.append(
+                FeatureAttribution(
+                    feature_name=feat_name,
+                    observed_value=round(obs_val, 4),
+                    baseline_expected=round(exp_val, 4),
+                    shap_value=round(shap_val, 4),
+                    importance_rank=rank,
+                )
+            )
+
+        return attributions
+
+    def get_waterfall_payload(
+        self,
+        window: WindowAggregate,
+        top_k: int = 6,
+    ) -> Dict[str, Union[float, List]]:
+        """Generate structured visualization payload for Streamlit waterfall / bar graphs."""
+        shap_values, raw_vals = self.compute_shap_values(window)
+        abs_shap = np.abs(shap_values)
+        ranked_indices = np.argsort(abs_shap)[::-1]
+
+        features: List[str] = []
+        values: List[float] = []
+        observed: List[float] = []
+        baseline: List[float] = []
+
+        for idx in ranked_indices[:top_k]:
+            features.append(self.feature_names[idx])
+            values.append(round(float(shap_values[idx]), 4))
+            observed.append(round(float(raw_vals[idx]), 4))
+            baseline.append(round(float(self.baseline_unscaled_means[idx]), 4))
+
+        return {
+            "base_value": round(self.expected_value, 4),
+            "features": features,
+            "shap_values": values,
+            "observed_values": observed,
+            "baseline_expected": baseline,
+        }
