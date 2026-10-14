@@ -5,6 +5,7 @@ Wraps SHAP (SHapley Additive exPlanations) for Isolation Forest ensembles to cal
 mathematically grounded feature attributions and base expected values.
 """
 
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import shap
@@ -179,7 +180,9 @@ class SemanticReasoningEngine:
         top_names = {a.feature_name for a in attributions[:3]}
 
         # 1. DDoS / Volumetric HTTP Flood
-        if top_feature in ("request_count", "request_rate_per_sec"):
+        if top_feature in ("request_count", "request_rate_per_sec") or (
+            any(f in top_names for f in ("request_count", "request_rate_per_sec")) and window.request_count > 300
+        ):
             hypothesis = "High Volumetric HTTP Flood (DDoS)"
             narrative = (
                 f"SHAP attribution identifies {top_feature} as the primary driver (SHAP score +{top_shap:.3f}). "
@@ -188,28 +191,11 @@ class SemanticReasoningEngine:
             )
             return hypothesis, narrative
 
-        # 2. Credential Stuffing / Brute Force
-        if top_feature == "auth_failure_count" or ("error_rate_4xx" in top_names and window.auth_failure_count > 5):
-            hypothesis = "Distributed Credential Stuffing Campaign"
-            narrative = (
-                f"SHAP attribution isolates authentication anomalies (SHAP score +{top_shap:.3f}). "
-                f"Authorization failures surged to {window.auth_failure_count} (normal expected: {top_exp:.1f}), "
-                f"exhibiting a {window.bot_agent_ratio*100:.1f}% automated bot agent signature across auth endpoints."
-            )
-            return hypothesis, narrative
-
-        # 3. Off-Hour Reconnaissance / Admin Probing
-        if top_feature == "off_hour_ratio" or (window.off_hour_ratio > 0.4 and "error_rate_4xx" in top_names):
-            hypothesis = "Off-Hours Reconnaissance Probing"
-            narrative = (
-                f"SHAP TreeExplainer flagged temporal context anomaly (SHAP score +{top_shap:.3f}). "
-                f"Unusual API access during off-peak hours ({window.off_hour_ratio*100:.1f}% off-hour activity vs {top_exp*100:.1f}% expected), "
-                f"accompanied by elevated client errors ({window.error_count_4xx} 4xx status responses) targeting privileged paths."
-            )
-            return hypothesis, narrative
-
-        # 4. Privileged Data Exfiltration Surge
-        if top_feature in ("total_response_bytes", "mean_response_bytes"):
+        # 2. Privileged Data Exfiltration Surge
+        if top_feature in ("total_response_bytes", "mean_response_bytes") or (
+            any(f in top_names for f in ("total_response_bytes", "mean_response_bytes"))
+            and window.total_response_bytes > 5 * 1024 * 1024
+        ):
             megabytes = window.total_response_bytes / (1024 * 1024)
             hypothesis = "Privileged Data Exfiltration Surge"
             narrative = (
@@ -219,8 +205,39 @@ class SemanticReasoningEngine:
             )
             return hypothesis, narrative
 
+        # 3. Credential Stuffing / Brute Force
+        if (
+            top_feature in ("auth_failure_count", "bot_agent_ratio")
+            or any(f in top_names for f in ("auth_failure_count", "bot_agent_ratio"))
+            or ("error_rate_4xx" in top_names and window.auth_failure_count > 5)
+            or (window.auth_failure_count > 10 and window.bot_agent_ratio > 0.3)
+        ):
+            hypothesis = "Distributed Credential Stuffing Campaign"
+            narrative = (
+                f"SHAP attribution isolates authentication anomalies (SHAP score +{top_shap:.3f}). "
+                f"Authorization failures surged to {window.auth_failure_count} (normal expected: {top_exp:.1f}), "
+                f"exhibiting a {window.bot_agent_ratio*100:.1f}% automated bot agent signature across auth endpoints."
+            )
+            return hypothesis, narrative
+
+        # 4. Off-Hour Reconnaissance / Admin Probing
+        if (
+            top_feature == "off_hour_ratio"
+            or "off_hour_ratio" in top_names
+            or window.off_hour_ratio > 0.4
+        ):
+            hypothesis = "Off-Hours Reconnaissance Probing"
+            narrative = (
+                f"SHAP TreeExplainer flagged temporal context anomaly (SHAP score +{top_shap:.3f}). "
+                f"Unusual API access during off-peak hours ({window.off_hour_ratio*100:.1f}% off-hour activity vs {top_exp*100:.1f}% expected), "
+                f"accompanied by elevated client errors ({window.error_count_4xx} 4xx status responses) targeting privileged paths."
+            )
+            return hypothesis, narrative
+
         # 5. Latency Degradation / Resource Exhaustion
-        if top_feature in ("mean_duration_ms", "p95_duration_ms"):
+        if top_feature in ("mean_duration_ms", "p95_duration_ms") or any(
+            f in top_names for f in ("mean_duration_ms", "p95_duration_ms")
+        ):
             hypothesis = "Workload Latency Degradation / Service Saturation"
             narrative = (
                 f"SHAP attribution detected severe processing latency regression (SHAP score +{top_shap:.3f}). "
