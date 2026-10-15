@@ -1,24 +1,27 @@
-"""Pluggable cloud and local storage sinks for ThreatAlert incident records.
+"""Pluggable cloud and local storage sinks for ThreatAlert incidents and raw telemetry.
 
 Supports:
-1. InMemoryAlertSink: Ultra-fast thread-safe storage for tests and local runtime.
-2. LocalJsonAlertSink: Durable append-only JSONL file storage with directory rotation.
-3. DynamoDBAlertSink: AWS DynamoDB driver supporting LocalStack or live AWS with auto-table provisioning.
+1. InMemoryAlertSink / InMemoryTelemetryArchiver: Fast thread-safe storage for tests and local runtime.
+2. LocalJsonAlertSink / LocalFileTelemetryArchiver: Durable append-only and partition-structured local storage.
+3. DynamoDBAlertSink / S3TelemetryArchiver: AWS Boto3 drivers supporting LocalStack or live AWS.
 """
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from decimal import Decimal
+import gzip
+import io
 import json
 import logging
 from pathlib import Path
 import threading
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
+import uuid
 
 import boto3
 from botocore.exceptions import ClientError
 
-from api.schemas import SeverityLevel, ThreatAlert
+from api.schemas import CloudTelemetryLog, SeverityLevel, ThreatAlert
 
 logger = logging.getLogger(__name__)
 
@@ -516,3 +519,354 @@ def get_alert_sink(
 
     # Default fallback
     return LocalJsonAlertSink(file_path=file_path or "data/alerts/threat_alerts.jsonl")
+
+
+# ==============================================================================
+# TELEMETRY BATCH ARCHIVER (Local Parquet/JSONL.gz & AWS S3)
+# ==============================================================================
+
+
+class BaseTelemetryArchiver(ABC):
+    """Abstract interface for raw cloud telemetry archive storage."""
+
+    @abstractmethod
+    def archive_batch(
+        self,
+        logs: List[CloudTelemetryLog],
+        partition_date: Optional[datetime] = None,
+        batch_id: Optional[str] = None,
+    ) -> str:
+        """Compress and persist a batch of raw telemetry logs.
+
+        Args:
+            logs: List of CloudTelemetryLog instances.
+            partition_date: UTC datetime used for date-partitioned storage paths.
+            batch_id: Optional unique identifier for this batch.
+
+        Returns:
+            URI or storage path of the archived batch.
+        """
+        pass
+
+    @abstractmethod
+    def read_batch(self, archive_uri: str) -> List[CloudTelemetryLog]:
+        """Read and decompress an archived telemetry batch.
+
+        Args:
+            archive_uri: URI or path returned by archive_batch.
+
+        Returns:
+            List of deserialized CloudTelemetryLog instances.
+        """
+        pass
+
+    @abstractmethod
+    def list_archives(self, prefix: Optional[str] = None) -> List[str]:
+        """List available archive URIs matching optional prefix."""
+        pass
+
+    @abstractmethod
+    def clear(self) -> None:
+        """Clear all stored archives."""
+        pass
+
+
+class InMemoryTelemetryArchiver(BaseTelemetryArchiver):
+    """Thread-safe in-memory telemetry archiver for testing and simulation."""
+
+    def __init__(self) -> None:
+        self._archives: Dict[str, List[CloudTelemetryLog]] = {}
+        self._lock = threading.RLock()
+
+    def archive_batch(
+        self,
+        logs: List[CloudTelemetryLog],
+        partition_date: Optional[datetime] = None,
+        batch_id: Optional[str] = None,
+    ) -> str:
+        dt = partition_date or datetime.now(timezone.utc)
+        bid = batch_id or str(uuid.uuid4())[:8]
+        uri = f"mem://telemetry/year={dt.year}/month={dt.month:02d}/day={dt.day:02d}/telemetry_{bid}.jsonl.gz"
+        with self._lock:
+            self._archives[uri] = list(logs)
+        return uri
+
+    def read_batch(self, archive_uri: str) -> List[CloudTelemetryLog]:
+        with self._lock:
+            if archive_uri not in self._archives:
+                raise FileNotFoundError(f"Archive not found: {archive_uri}")
+            return list(self._archives[archive_uri])
+
+    def list_archives(self, prefix: Optional[str] = None) -> List[str]:
+        with self._lock:
+            uris = list(self._archives.keys())
+        if prefix:
+            uris = [u for u in uris if u.startswith(prefix)]
+        return sorted(uris)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._archives.clear()
+
+
+class LocalFileTelemetryArchiver(BaseTelemetryArchiver):
+    """Hierarchical date-partitioned local filesystem telemetry archiver with gzip compression."""
+
+    def __init__(self, base_dir: Union[str, Path] = "data/raw") -> None:
+        self.base_dir = Path(base_dir)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+
+    def _get_partition_dir(self, dt: datetime) -> Path:
+        """Format partition subfolder: year=YYYY/month=MM/day=DD."""
+        partition_dir = (
+            self.base_dir
+            / f"year={dt.year}"
+            / f"month={dt.month:02d}"
+            / f"day={dt.day:02d}"
+        )
+        partition_dir.mkdir(parents=True, exist_ok=True)
+        return partition_dir
+
+    def archive_batch(
+        self,
+        logs: List[CloudTelemetryLog],
+        partition_date: Optional[datetime] = None,
+        batch_id: Optional[str] = None,
+    ) -> str:
+        dt = partition_date or datetime.now(timezone.utc)
+        bid = batch_id or str(uuid.uuid4())[:8]
+        target_dir = self._get_partition_dir(dt)
+        target_file = target_dir / f"telemetry_{bid}.jsonl.gz"
+
+        raw_json_lines = "\n".join(log.model_dump_json() for log in logs) + "\n"
+        with self._lock:
+            with gzip.open(target_file, "wt", encoding="utf-8") as gz:
+                gz.write(raw_json_lines)
+
+        return str(target_file.as_posix())
+
+    def read_batch(self, archive_uri: str) -> List[CloudTelemetryLog]:
+        path = Path(archive_uri)
+        if not path.exists():
+            raise FileNotFoundError(f"Archive file not found: {archive_uri}")
+
+        logs: List[CloudTelemetryLog] = []
+        with self._lock:
+            is_gz = path.suffix == ".gz" or str(path).endswith(".jsonl.gz")
+            opener = gzip.open(path, "rt", encoding="utf-8") if is_gz else open(path, "rt", encoding="utf-8")
+            with opener as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        logs.append(CloudTelemetryLog.model_validate_json(line))
+        return logs
+
+    def list_archives(self, prefix: Optional[str] = None) -> List[str]:
+        results: List[str] = []
+        with self._lock:
+            if not self.base_dir.exists():
+                return []
+            for path in sorted(self.base_dir.rglob("*.jsonl*")):
+                posix_str = path.as_posix()
+                if prefix is None or prefix in posix_str:
+                    results.append(posix_str)
+        return results
+
+    def clear(self) -> None:
+        with self._lock:
+            if self.base_dir.exists():
+                for item in self.base_dir.rglob("*.jsonl*"):
+                    try:
+                        item.unlink()
+                    except Exception as err:
+                        logger.warning("Could not delete %s: %s", item, err)
+
+
+class S3TelemetryArchiver(BaseTelemetryArchiver):
+    """AWS S3 / LocalStack telemetry archiver with gzip compression and partition keys."""
+
+    def __init__(
+        self,
+        bucket_name: str = "cloud-workload-telemetry-archive",
+        endpoint_url: Optional[str] = None,
+        region_name: str = "us-east-1",
+        aws_access_key_id: Optional[str] = None,
+        aws_secret_access_key: Optional[str] = None,
+        auto_create_bucket: bool = True,
+        s3_client: Optional[Any] = None,
+    ) -> None:
+        self.bucket_name = bucket_name
+        self.endpoint_url = endpoint_url
+        self.region_name = region_name
+
+        if s3_client is not None:
+            self._s3 = s3_client
+        else:
+            self._s3 = boto3.client(
+                "s3",
+                region_name=self.region_name,
+                endpoint_url=self.endpoint_url,
+                aws_access_key_id=aws_access_key_id or "test",
+                aws_secret_access_key=aws_secret_access_key or "test",
+            )
+
+        if auto_create_bucket:
+            self.ensure_bucket_exists()
+
+    def ensure_bucket_exists(self) -> None:
+        """Create target S3 bucket if it does not exist."""
+        try:
+            self._s3.head_bucket(Bucket=self.bucket_name)
+        except ClientError as err:
+            error_code = str(err.response.get("Error", {}).get("Code", ""))
+            if error_code in ("404", "NoSuchBucket"):
+                logger.info("Bucket %s not found. Creating on S3...", self.bucket_name)
+                try:
+                    kwargs: Dict[str, Any] = {"Bucket": self.bucket_name}
+                    if self.region_name != "us-east-1":
+                        kwargs["CreateBucketConfiguration"] = {
+                            "LocationConstraint": self.region_name
+                        }
+                    self._s3.create_bucket(**kwargs)
+                    logger.info("Created S3 bucket: %s", self.bucket_name)
+                except Exception as create_err:
+                    logger.warning("Could not auto-create S3 bucket %s: %s", self.bucket_name, create_err)
+            else:
+                logger.warning("Could not query S3 bucket %s: %s", self.bucket_name, err)
+        except Exception as err:
+            logger.warning("S3 connection error: %s", err)
+
+    def _build_key(self, dt: datetime, batch_id: str) -> str:
+        return f"telemetry/year={dt.year}/month={dt.month:02d}/day={dt.day:02d}/telemetry_{batch_id}.jsonl.gz"
+
+    def archive_batch(
+        self,
+        logs: List[CloudTelemetryLog],
+        partition_date: Optional[datetime] = None,
+        batch_id: Optional[str] = None,
+    ) -> str:
+        dt = partition_date or datetime.now(timezone.utc)
+        bid = batch_id or str(uuid.uuid4())[:8]
+        key = self._build_key(dt, bid)
+
+        raw_payload = "\n".join(log.model_dump_json() for log in logs) + "\n"
+        compressed_bytes = gzip.compress(raw_payload.encode("utf-8"))
+
+        self._s3.put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=compressed_bytes,
+            ContentEncoding="gzip",
+            ContentType="application/x-ndjson",
+        )
+        return f"s3://{self.bucket_name}/{key}"
+
+    def read_batch(self, archive_uri: str) -> List[CloudTelemetryLog]:
+        if archive_uri.startswith("s3://"):
+            parts = archive_uri[5:].split("/", 1)
+            bucket, key = parts[0], parts[1]
+        else:
+            bucket = self.bucket_name
+            key = archive_uri
+
+        response = self._s3.get_object(Bucket=bucket, Key=key)
+        raw_body = response["Body"].read()
+
+        # Decompress if gzipped
+        if key.endswith(".gz") or raw_body[:2] == b"\x1f\x8b":
+            decompressed = gzip.decompress(raw_body).decode("utf-8")
+        else:
+            decompressed = raw_body.decode("utf-8")
+
+        logs: List[CloudTelemetryLog] = []
+        for line in decompressed.splitlines():
+            line = line.strip()
+            if line:
+                logs.append(CloudTelemetryLog.model_validate_json(line))
+        return logs
+
+    def list_archives(self, prefix: Optional[str] = None) -> List[str]:
+        pfx = prefix or "telemetry/"
+        paginator = self._s3.get_paginator("list_objects_v2")
+        results: List[str] = []
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=pfx):
+            for obj in page.get("Contents", []):
+                results.append(f"s3://{self.bucket_name}/{obj['Key']}")
+        return sorted(results)
+
+    def clear(self) -> None:
+        try:
+            archives = self.list_archives()
+            for uri in archives:
+                key = uri.replace(f"s3://{self.bucket_name}/", "")
+                self._s3.delete_object(Bucket=self.bucket_name, Key=key)
+        except Exception as err:
+            logger.warning("Error clearing S3 archives: %s", err)
+
+
+def get_telemetry_archiver(
+    driver: str = "auto",
+    base_dir: Optional[str] = None,
+    bucket_name: str = "cloud-workload-telemetry-archive",
+    endpoint_url: Optional[str] = None,
+    region_name: str = "us-east-1",
+    **kwargs: Any,
+) -> BaseTelemetryArchiver:
+    """Factory creating a telemetry batch archiver based on driver or environment.
+
+    Args:
+        driver: 'in_memory', 'local_file', 's3', or 'auto'.
+        base_dir: Root directory for local file archives.
+        bucket_name: Target S3 bucket name.
+        endpoint_url: Endpoint URL (e.g. 'http://localhost:4566' for LocalStack).
+        region_name: AWS region name.
+
+    Returns:
+        Configured BaseTelemetryArchiver instance.
+    """
+    driver = driver.lower().strip()
+
+    if driver == "in_memory":
+        return InMemoryTelemetryArchiver()
+
+    if driver == "local_file":
+        return LocalFileTelemetryArchiver(base_dir=base_dir or "data/raw")
+
+    if driver == "s3":
+        return S3TelemetryArchiver(
+            bucket_name=bucket_name,
+            endpoint_url=endpoint_url,
+            region_name=region_name,
+            **kwargs,
+        )
+
+    # Auto mode: check environment
+    import os
+
+    env_driver = os.environ.get("TELEMETRY_ARCHIVE_DRIVER", "").lower()
+    if env_driver:
+        return get_telemetry_archiver(
+            driver=env_driver,
+            base_dir=base_dir,
+            bucket_name=bucket_name,
+            endpoint_url=endpoint_url,
+            region_name=region_name,
+            **kwargs,
+        )
+
+    localstack_endpoint = os.environ.get("LOCALSTACK_ENDPOINT", os.environ.get("AWS_ENDPOINT_URL"))
+    if endpoint_url or localstack_endpoint:
+        try:
+            return S3TelemetryArchiver(
+                bucket_name=bucket_name,
+                endpoint_url=endpoint_url or localstack_endpoint,
+                region_name=region_name,
+                auto_create_bucket=True,
+                **kwargs,
+            )
+        except Exception as err:
+            logger.warning("Could not connect to S3 (%s), falling back to LocalFileTelemetryArchiver: %s", endpoint_url, err)
+
+    return LocalFileTelemetryArchiver(base_dir=base_dir or "data/raw")
+
