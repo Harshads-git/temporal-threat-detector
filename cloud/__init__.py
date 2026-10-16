@@ -1,10 +1,13 @@
 """Cloud telemetry ingestion, queue consumers, and storage drivers."""
 
 from cloud.queue_consumer import (
+    BackoffPolicy,
     BaseQueueConsumer,
     InMemoryQueueConsumer,
     QueueMessage,
     SQSQueueConsumer,
+    TelemetryIngestionWorker,
+    WorkerMetrics,
     get_queue_consumer,
 )
 from cloud.storage_sink import (
@@ -32,10 +35,13 @@ __all__ = [
     "LocalFileTelemetryArchiver",
     "S3TelemetryArchiver",
     "get_telemetry_archiver",
-    # Queue Consumers
+    # Queue Consumers & Workers
     "BaseQueueConsumer",
     "InMemoryQueueConsumer",
     "SQSQueueConsumer",
     "QueueMessage",
     "get_queue_consumer",
+    "BackoffPolicy",
+    "WorkerMetrics",
+    "TelemetryIngestionWorker",
 ]

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
+import random
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -596,3 +597,267 @@ def get_queue_consumer(
             logger.warning("Could not connect to SQS (%s), falling back to InMemoryQueueConsumer: %s", endpoint_url, err)
 
     return InMemoryQueueConsumer(**kwargs)
+
+
+# ==============================================================================
+# RESILIENT INGESTION WORKER & BACKOFF ENGINE
+# ==============================================================================
+
+
+class BackoffPolicy:
+    """Configurable exponential backoff with full jitter for resilient queue polling."""
+
+    def __init__(
+        self,
+        initial_delay_sec: float = 0.5,
+        max_delay_sec: float = 10.0,
+        multiplier: float = 2.0,
+        jitter_factor: float = 0.2,
+    ) -> None:
+        self.initial_delay_sec = initial_delay_sec
+        self.max_delay_sec = max_delay_sec
+        self.multiplier = multiplier
+        self.jitter_factor = jitter_factor
+
+    def compute_delay(self, attempt: int) -> float:
+        """Compute delay for an attempt with randomized jitter."""
+        base = min(self.max_delay_sec, self.initial_delay_sec * (self.multiplier ** attempt))
+        if self.jitter_factor <= 0:
+            return base
+        jitter = random.uniform(-self.jitter_factor * base, self.jitter_factor * base)
+        return max(0.05, base + jitter)
+
+
+@dataclass
+class WorkerMetrics:
+    """Runtime telemetry ingestion performance counters."""
+
+    messages_consumed: int = 0
+    messages_acknowledged: int = 0
+    messages_failed: int = 0
+    messages_sent_to_dlq: int = 0
+    windows_emitted: int = 0
+    alerts_triggered: int = 0
+    batches_processed: int = 0
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def uptime_seconds(self) -> float:
+        return (datetime.now(timezone.utc) - self.started_at).total_seconds()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "messages_consumed": self.messages_consumed,
+            "messages_acknowledged": self.messages_acknowledged,
+            "messages_failed": self.messages_failed,
+            "messages_sent_to_dlq": self.messages_sent_to_dlq,
+            "windows_emitted": self.windows_emitted,
+            "alerts_triggered": self.alerts_triggered,
+            "batches_processed": self.batches_processed,
+            "uptime_seconds": round(self.uptime_seconds(), 2),
+        }
+
+
+class TelemetryIngestionWorker:
+    """Event-driven worker coordinating queue consumption, window buffering, and detection pipeline."""
+
+    def __init__(
+        self,
+        queue_consumer: BaseQueueConsumer,
+        window_buffer: Optional[Any] = None,
+        detector_ensemble: Optional[Any] = None,
+        alert_sink: Optional[Any] = None,
+        telemetry_archiver: Optional[Any] = None,
+        explainer_engine: Optional[Any] = None,
+        backoff_policy: Optional[BackoffPolicy] = None,
+        batch_size: int = 20,
+    ) -> None:
+        """Initialize telemetry ingestion worker.
+
+        Args:
+            queue_consumer: Active BaseQueueConsumer driver.
+            window_buffer: StreamingWindowBuffer instance.
+            detector_ensemble: Optional HybridThreatEnsemble instance.
+            alert_sink: Optional BaseAlertStorageSink instance.
+            telemetry_archiver: Optional BaseTelemetryArchiver instance.
+            explainer_engine: Optional ShapExplainerEngine instance for XAI attribution.
+            backoff_policy: Optional custom backoff schedule.
+            batch_size: Maximum messages polled per iteration.
+        """
+        from engine.windowing import StreamingWindowBuffer
+
+        self.queue_consumer = queue_consumer
+        self.window_buffer = window_buffer or StreamingWindowBuffer()
+        self.detector_ensemble = detector_ensemble
+        self.alert_sink = alert_sink
+        self.telemetry_archiver = telemetry_archiver
+        self.explainer_engine = explainer_engine
+        self.backoff_policy = backoff_policy or BackoffPolicy()
+        self.batch_size = batch_size
+
+        self.metrics = WorkerMetrics()
+        self._stop_event = threading.Event()
+        self._worker_thread: Optional[threading.Thread] = None
+        self._lock = threading.RLock()
+
+    def process_batch(self, max_messages: Optional[int] = None) -> Dict[str, int]:
+        """Poll and process a single batch of telemetry messages from the queue.
+
+        Returns:
+            Dictionary with batch processing counts.
+        """
+        limit = max_messages or self.batch_size
+        messages = self.queue_consumer.poll_batch(max_messages=limit, wait_time_seconds=1)
+
+        if not messages:
+            return {
+                "messages_polled": 0,
+                "messages_processed": 0,
+                "messages_failed": 0,
+                "windows_emitted": 0,
+                "alerts_triggered": 0,
+            }
+
+        valid_logs: List[CloudTelemetryLog] = []
+        valid_handles: List[str] = []
+        failed_count = 0
+
+        # 1. Deserialize and filter messages
+        for msg in messages:
+            try:
+                log = msg.to_log()
+                valid_logs.append(log)
+                valid_handles.append(msg.receipt_handle)
+            except Exception as err:
+                logger.error("Malformed telemetry payload in message %s: %s", msg.message_id, err)
+                # Poison pill / malformed message: reject without requeue (moves directly to DLQ)
+                self.queue_consumer.reject(msg.receipt_handle, requeue=False)
+                failed_count += 1
+                with self._lock:
+                    self.metrics.messages_failed += 1
+                    self.metrics.messages_sent_to_dlq += 1
+
+        batch_windows_emitted = 0
+        batch_alerts_triggered = 0
+
+        # 2. Archive batch to telemetry storage if archiver attached
+        if valid_logs and self.telemetry_archiver is not None:
+            try:
+                self.telemetry_archiver.archive_batch(valid_logs)
+            except Exception as err:
+                logger.warning("Telemetry archiving error: %s", err)
+
+        # 3. Feed events to streaming window buffer
+        if valid_logs:
+            self.window_buffer.add_events(valid_logs)
+            completed_windows = self.window_buffer.check_and_emit_windows()
+
+            # 4. Run detection ensemble and XAI attribution on completed windows
+            for window in completed_windows:
+                batch_windows_emitted += 1
+                with self._lock:
+                    self.metrics.windows_emitted += 1
+
+                if self.detector_ensemble is not None:
+                    try:
+                        alert = self.detector_ensemble.evaluate(window)
+                        if alert is not None:
+                            # Enrich alert with SHAP attribution if explainer engine attached
+                            if self.explainer_engine is not None:
+                                try:
+                                    attributions = self.explainer_engine.explain_window(window, top_k=4)
+                                    alert.top_contributions = attributions
+
+                                    from engine.explainability import (
+                                        IncidentResponseRecommender,
+                                        SemanticReasoningEngine,
+                                    )
+
+                                    hyp, nar = SemanticReasoningEngine.infer_threat_semantics(attributions, window)
+                                    alert.threat_hypothesis = hyp
+                                    alert.explanation_narrative = nar
+
+                                    playbook = IncidentResponseRecommender.get_playbook(hyp)
+                                    if playbook:
+                                        alert.recommended_mitigation = playbook.mitigation_summary
+                                except Exception as xai_err:
+                                    logger.warning("XAI attribution error during alert enrichment: %s", xai_err)
+
+                            # Persist alert to storage sink
+                            if self.alert_sink is not None:
+                                self.alert_sink.save_alert(alert)
+
+                            batch_alerts_triggered += 1
+                            with self._lock:
+                                self.metrics.alerts_triggered += 1
+                    except Exception as det_err:
+                        logger.error("Detection ensemble error: %s", det_err)
+
+            # 5. Acknowledge processed messages from queue
+            if valid_handles:
+                self.queue_consumer.acknowledge_batch(valid_handles)
+
+        with self._lock:
+            self.metrics.messages_consumed += len(messages)
+            self.metrics.messages_acknowledged += len(valid_handles)
+            self.metrics.batches_processed += 1
+
+        return {
+            "messages_polled": len(messages),
+            "messages_processed": len(valid_logs),
+            "messages_failed": failed_count,
+            "windows_emitted": batch_windows_emitted,
+            "alerts_triggered": batch_alerts_triggered,
+        }
+
+    def run_batches(self, batch_count: int, batch_size: Optional[int] = None) -> WorkerMetrics:
+        """Run worker synchronously for a specified number of batch cycles.
+
+        Useful for unit testing, historical playback, and benchmark pipelines.
+        """
+        for _ in range(batch_count):
+            self.process_batch(max_messages=batch_size)
+        return self.metrics
+
+    def _worker_loop(self) -> None:
+        """Internal loop executed in background worker thread."""
+        idle_attempt = 0
+        while not self._stop_event.is_set():
+            try:
+                stats = self.process_batch(self.batch_size)
+                if stats["messages_polled"] == 0:
+                    delay = self.backoff_policy.compute_delay(idle_attempt)
+                    idle_attempt += 1
+                    time.sleep(delay)
+                else:
+                    idle_attempt = 0
+            except Exception as err:
+                logger.error("Unhandled error in TelemetryIngestionWorker loop: %s", err)
+                time.sleep(1.0)
+
+    def start(self) -> None:
+        """Start worker in an asynchronous background daemon thread."""
+        with self._lock:
+            if self._worker_thread is not None and self._worker_thread.is_alive():
+                logger.warning("TelemetryIngestionWorker is already running.")
+                return
+
+            self._stop_event.clear()
+            self._worker_thread = threading.Thread(
+                target=self._worker_loop,
+                name="TelemetryIngestionWorker",
+                daemon=True,
+            )
+            self._worker_thread.start()
+            logger.info("TelemetryIngestionWorker started in background thread.")
+
+    def stop(self, timeout_sec: float = 5.0) -> None:
+        """Stop background worker thread."""
+        with self._lock:
+            if self._worker_thread is None or not self._worker_thread.is_alive():
+                return
+
+            self._stop_event.set()
+            self._worker_thread.join(timeout=timeout_sec)
+            self._worker_thread = None
+            logger.info("TelemetryIngestionWorker stopped.")
+
