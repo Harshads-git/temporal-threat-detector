@@ -14,6 +14,8 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.schemas import (
+    AttackInjectionConfig,
+    AttackInjectionResponse,
     BatchIngestResponse,
     CloudTelemetryLog,
     DetectionRequest,
@@ -22,6 +24,7 @@ from api.schemas import (
     IngestionBatch,
     IngestResponse,
     PipelineMetrics,
+    SeverityLevel,
     ThreatAlert,
     WindowAggregate,
 )
@@ -369,3 +372,75 @@ def get_alert_waterfall(alert_id: str) -> Dict[str, Any]:
     payload["threat_hypothesis"] = alert.threat_hypothesis
     payload["severity"] = str(alert.severity)
     return payload
+
+
+@app.get("/alerts", response_model=List[ThreatAlert], tags=["Alerts"])
+def list_alerts(
+    limit: int = 50,
+    severity: Optional[SeverityLevel] = None,
+    threat_hypothesis: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+) -> List[ThreatAlert]:
+    """Query stored dual-tier threat alerts with optional filtering."""
+    alert_sink: BaseAlertStorageSink = app.state.alert_sink
+    return alert_sink.list_alerts(
+        limit=limit,
+        severity=severity,
+        threat_hypothesis=threat_hypothesis,
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+
+@app.get("/alerts/{alert_id}", response_model=ThreatAlert, tags=["Alerts"])
+def get_alert_by_id(alert_id: str) -> ThreatAlert:
+    """Retrieve full incident record and SHAP attribution for a specific alert."""
+    alert_sink: BaseAlertStorageSink = app.state.alert_sink
+    alert = alert_sink.get_alert(alert_id)
+    if alert is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"ThreatAlert '{alert_id}' not found.",
+        )
+    return alert
+
+
+@app.post(
+    "/inject",
+    response_model=AttackInjectionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Attack Injection"],
+)
+def inject_attack_telemetry(config: AttackInjectionConfig) -> AttackInjectionResponse:
+    """Inject synthetic attack pattern telemetry directly into the ingestion queue."""
+    queue: BaseQueueConsumer = app.state.queue
+    generator = SyntheticTelemetryGenerator()
+
+    try:
+        events = generator.generate_batch(
+            count=config.record_count,
+            inject_attack=config.attack_type,
+            intensity=config.intensity_multiplier,
+            burst_mode=config.burst_mode,
+            jitter_pct=config.jitter_pct,
+        )
+
+        if config.target_endpoint:
+            for ev in events:
+                ev.endpoint = config.target_endpoint
+
+        msg_ids = queue.send_batch(events)
+
+        return AttackInjectionResponse(
+            status="injected",
+            attack_type=config.attack_type,
+            injected_count=len(events),
+            queue_message_ids=msg_ids,
+        )
+    except Exception as err:
+        logger.error("Attack injection error: %s", err)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to inject attack telemetry: {err}",
+        )
