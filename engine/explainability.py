@@ -180,8 +180,10 @@ class SemanticReasoningEngine:
         top_names = {a.feature_name for a in attributions[:3]}
 
         # 1. DDoS / Volumetric HTTP Flood
-        if top_feature in ("request_count", "request_rate_per_sec") or (
-            any(f in top_names for f in ("request_count", "request_rate_per_sec")) and window.request_count > 300
+        if (
+            top_feature in ("request_count", "request_rate_per_sec")
+            or (any(f in top_names for f in ("request_count", "request_rate_per_sec")) and window.request_count > 300)
+            or window.request_count > 500
         ):
             hypothesis = "High Volumetric HTTP Flood (DDoS)"
             narrative = (

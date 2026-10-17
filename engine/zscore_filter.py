@@ -138,17 +138,17 @@ class SlidingWindowZScoreFilter:
             # Median Absolute Deviation (MAD) scaled by 1.4826 for normal consistency
             median = float(np.median(arr))
             mad = float(np.median(np.abs(arr - median)))
-            dispersion = max(1e-4, 1.4826 * mad)
+            dispersion = max(0.5, 1.4826 * mad)
             center = median
             z_score = (val - center) / dispersion
         else:
             center = float(np.mean(arr))
-            dispersion = max(1e-4, float(np.std(arr)))
+            dispersion = max(0.5, float(np.std(arr)))
             z_score = (val - center) / dispersion
 
         effective_threshold = self.get_effective_threshold()
         abs_z = abs(z_score)
-        is_anomaly = abs_z >= effective_threshold
+        is_anomaly = z_score >= effective_threshold
 
         # Compute severity tier
         if abs_z >= 5.0:

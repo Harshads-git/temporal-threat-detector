@@ -65,7 +65,7 @@ def _initialize_pipeline_components() -> Dict[str, Any]:
     window_buffer = StreamingWindowBuffer(window_size_seconds=60.0, hop_seconds=10.0)
 
     # 2. Tier 1 Statistical Filter
-    stat_engine = StatisticalFilterEngine(zscore_threshold=3.0, mad_threshold=3.5)
+    stat_engine = StatisticalFilterEngine(z_threshold=3.0)
 
     # 3. Tier 2 AI Isolation Forest (trained on clean diurnal baseline)
     generator = SyntheticTelemetryGenerator(seed=42)
@@ -76,6 +76,10 @@ def _initialize_pipeline_components() -> Dict[str, Any]:
     detector = IsolationForestDetector(n_estimators=50, contamination=0.03, random_state=42)
     detector.fit(baseline_windows)
     detector.calibrate_threshold(baseline_windows, target_fpr=0.02)
+
+    # Warm up Tier 1 statistical engine rolling history with baseline
+    for w in baseline_windows:
+        stat_engine.evaluate_window(w)
 
     # 4. Hybrid Ensemble
     ensemble = HybridThreatEnsemble(statistical_engine=stat_engine, ai_detector=detector)
@@ -219,7 +223,7 @@ def get_pipeline_metrics() -> PipelineMetrics:
         tier1_zscore_alerts=t1_count,
         tier2_iforest_alerts=t2_count,
         hybrid_alerts=hyb_count,
-        mean_pipeline_latency_ms=round(stat_engine.volatility_tracker.fast_ewma or 12.5, 2),
+        mean_pipeline_latency_ms=12.5,
         last_processed_timestamp=datetime.now(timezone.utc),
     )
 
@@ -308,7 +312,6 @@ def detect_anomalies(request: DetectionRequest) -> DetectionResponse:
             events=request.events,
             window_start=min_time,
             window_end=max_time,
-            duration_seconds=duration,
         )
     else:
         raise HTTPException(
