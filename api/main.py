@@ -16,10 +16,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.schemas import (
     BatchIngestResponse,
     CloudTelemetryLog,
+    DetectionRequest,
+    DetectionResponse,
     HealthResponse,
     IngestionBatch,
     IngestResponse,
     PipelineMetrics,
+    ThreatAlert,
+    WindowAggregate,
 )
 from cloud.queue_consumer import (
     BaseQueueConsumer,
@@ -33,9 +37,17 @@ from cloud.storage_sink import (
     get_telemetry_archiver,
 )
 from data.synthetic_generator import SyntheticTelemetryGenerator
-from engine.explainability import ShapExplainerEngine
+from engine.explainability import (
+    IncidentResponseRecommender,
+    SemanticReasoningEngine,
+    ShapExplainerEngine,
+)
 from engine.isolation_forest import HybridThreatEnsemble, IsolationForestDetector
-from engine.windowing import StreamingWindowBuffer, TemporalWindowAggregator
+from engine.windowing import (
+    StreamingWindowBuffer,
+    TemporalWindowAggregator,
+    compute_window_features,
+)
 from engine.zscore_filter import StatisticalFilterEngine
 
 logger = logging.getLogger("uvicorn.error")
@@ -272,3 +284,88 @@ def ingest_batch(payload: Union[IngestionBatch, List[CloudTelemetryLog]]) -> Bat
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to enqueue telemetry batch: {err}",
         )
+
+
+@app.post("/detect", response_model=DetectionResponse, tags=["Detection"])
+def detect_anomalies(request: DetectionRequest) -> DetectionResponse:
+    """Perform on-demand dual-tier temporal anomaly detection and XAI explanation."""
+    ensemble: HybridThreatEnsemble = app.state.ensemble
+    explainer: ShapExplainerEngine = app.state.explainer
+    alert_sink: BaseAlertStorageSink = app.state.alert_sink
+
+    target_window: Optional[WindowAggregate] = None
+
+    if request.window is not None:
+        target_window = request.window
+    elif request.events:
+        min_time = min(e.timestamp for e in request.events)
+        max_time = max(e.timestamp for e in request.events)
+        duration = max(1.0, (max_time - min_time).total_seconds())
+        target_window = compute_window_features(
+            events=request.events,
+            window_start=min_time,
+            window_end=max_time,
+            duration_seconds=duration,
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either 'window' or 'events' must be provided in DetectionRequest.",
+        )
+
+    alert = ensemble.evaluate(target_window)
+
+    if alert is not None:
+        # Enrich alert with SHAP attribution and semantic reasoning
+        try:
+            attributions = explainer.explain_window(target_window, top_k=4)
+            alert.top_contributions = attributions
+            hyp, nar = SemanticReasoningEngine.infer_threat_semantics(attributions, target_window)
+            alert.threat_hypothesis = hyp
+            alert.explanation_narrative = nar
+            playbook = IncidentResponseRecommender.get_playbook(hyp)
+            if playbook:
+                alert.recommended_mitigation = playbook.mitigation_summary
+        except Exception as xai_err:
+            logger.warning("XAI attribution error during on-demand detection: %s", xai_err)
+
+        # Persist triggered alert
+        alert_sink.save_alert(alert)
+
+        return DetectionResponse(
+            is_anomaly=True,
+            window_id=target_window.window_id,
+            alert=alert,
+            detector_tier=alert.detector_tier,
+            anomaly_score=round(alert.anomaly_score, 2),
+            message=f"Threat detected: {alert.threat_hypothesis}",
+        )
+
+    return DetectionResponse(
+        is_anomaly=False,
+        window_id=target_window.window_id,
+        alert=None,
+        detector_tier=None,
+        anomaly_score=0.0,
+        message="Window metrics within nominal diurnal baseline.",
+    )
+
+
+@app.get("/xai/waterfall/{alert_id}", tags=["Detection"])
+def get_alert_waterfall(alert_id: str) -> Dict[str, Any]:
+    """Retrieve chart-ready SHAP waterfall payload for a specific threat alert."""
+    alert_sink: BaseAlertStorageSink = app.state.alert_sink
+    explainer: ShapExplainerEngine = app.state.explainer
+
+    alert = alert_sink.get_alert(alert_id)
+    if alert is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"ThreatAlert '{alert_id}' not found.",
+        )
+
+    payload = explainer.get_waterfall_payload(alert.raw_window_metrics, top_k=6)
+    payload["alert_id"] = alert_id
+    payload["threat_hypothesis"] = alert.threat_hypothesis
+    payload["severity"] = str(alert.severity)
+    return payload
