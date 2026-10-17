@@ -7,12 +7,20 @@ explainable AI (SHAP) attributions, stored threat alerts, attack injections, and
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+import uuid
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.schemas import HealthResponse, PipelineMetrics
+from api.schemas import (
+    BatchIngestResponse,
+    CloudTelemetryLog,
+    HealthResponse,
+    IngestionBatch,
+    IngestResponse,
+    PipelineMetrics,
+)
 from cloud.queue_consumer import (
     BaseQueueConsumer,
     TelemetryIngestionWorker,
@@ -199,3 +207,68 @@ def get_pipeline_metrics() -> PipelineMetrics:
         mean_pipeline_latency_ms=round(stat_engine.volatility_tracker.fast_ewma or 12.5, 2),
         last_processed_timestamp=datetime.now(timezone.utc),
     )
+
+
+@app.post(
+    "/ingest",
+    response_model=IngestResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["Ingestion"],
+)
+def ingest_event(event: CloudTelemetryLog) -> IngestResponse:
+    """Ingest a single cloud telemetry event into the message queue."""
+    queue: BaseQueueConsumer = app.state.queue
+    try:
+        msg_id = queue.send_message(event)
+        return IngestResponse(
+            status="accepted",
+            event_id=event.event_id,
+            queue_message_id=msg_id,
+            timestamp=datetime.now(timezone.utc),
+        )
+    except Exception as err:
+        logger.error("Failed to enqueue telemetry event: %s", err)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enqueue telemetry event: {err}",
+        )
+
+
+@app.post(
+    "/ingest/batch",
+    response_model=BatchIngestResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["Ingestion"],
+)
+def ingest_batch(payload: Union[IngestionBatch, List[CloudTelemetryLog]]) -> BatchIngestResponse:
+    """Ingest a batch of cloud telemetry events into the message queue."""
+    queue: BaseQueueConsumer = app.state.queue
+    events = payload.events if isinstance(payload, IngestionBatch) else payload
+
+    if not events:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Batch contains no events.",
+        )
+
+    if len(events) > 5000:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Batch size {len(events)} exceeds maximum limit of 5000 events.",
+        )
+
+    batch_id = payload.batch_id if isinstance(payload, IngestionBatch) else str(uuid.uuid4())
+    try:
+        msg_ids = queue.send_batch(events)
+        return BatchIngestResponse(
+            status="accepted",
+            batch_id=batch_id,
+            accepted_count=len(events),
+            queue_message_ids=msg_ids,
+        )
+    except Exception as err:
+        logger.error("Failed to enqueue telemetry batch: %s", err)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enqueue telemetry batch: {err}",
+        )
