@@ -328,3 +328,60 @@ class PipelineMetrics(BaseModel):
     hybrid_alerts: int
     mean_pipeline_latency_ms: float
     last_processed_timestamp: Optional[datetime] = None
+
+
+class IngestResponse(BaseModel):
+    """Response returned upon ingesting a single telemetry event."""
+
+    status: str = Field(default="accepted")
+    event_id: str
+    queue_message_id: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class BatchIngestResponse(BaseModel):
+    """Response returned upon ingesting a telemetry batch."""
+
+    status: str = Field(default="accepted")
+    batch_id: str
+    accepted_count: int
+    queue_message_ids: List[str] = Field(default_factory=list)
+
+
+class DetectionRequest(BaseModel):
+    """Request payload for on-demand temporal anomaly detection."""
+
+    window: Optional[WindowAggregate] = None
+    events: Optional[List[CloudTelemetryLog]] = None
+
+
+class DetectionResponse(BaseModel):
+    """Response returned by on-demand detection endpoint."""
+
+    is_anomaly: bool
+    window_id: str
+    alert: Optional[ThreatAlert] = None
+    detector_tier: Optional[DetectorTier] = None
+    anomaly_score: float = 0.0
+    message: str
+
+
+class HealthResponse(BaseModel):
+    """Liveness and readiness probe response."""
+
+    status: str = Field(default="healthy")
+    version: str = Field(default="1.0.0")
+    uptime_seconds: float
+    detector_ready: bool
+    queue_depth: int
+    dlq_depth: int
+    alert_count: int
+
+
+class AttackInjectionResponse(BaseModel):
+    """Response returned after injecting synthetic attack events."""
+
+    status: str = Field(default="injected")
+    attack_type: AttackType
+    injected_count: int
+    queue_message_ids: List[str] = Field(default_factory=list)
