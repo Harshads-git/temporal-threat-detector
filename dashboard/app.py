@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import streamlit as st
 from dashboard.api_client import DashboardApiClient
+from dashboard.components.metrics_panel import render_kpi_ribbon
 
 # Streamlit Page Configuration
 st.set_page_config(
@@ -179,12 +180,17 @@ def main() -> None:
     ])
 
     with tab_overview:
-        st.subheader("Operational Overview")
+        st.subheader("Operational Pipeline KPIs")
         if settings["is_online"]:
             health = client.get_health()
-            st.success(f"System status: **{health.get('status', 'healthy').upper()}** | Cloud Drivers: **{health.get('subsystems', {}).get('queue_driver', 'in-memory')}**")
+            metrics = client.get_metrics()
+            render_kpi_ribbon(metrics=metrics, health=health)
         else:
             st.error("Cannot load operational overview while backend is disconnected.")
+            render_kpi_ribbon(
+                metrics={"total_events_processed": 0, "queue_depth": 0, "total_alerts_emitted": 0, "tier1_zscore_alerts": 0, "tier2_iforest_alerts": 0, "hybrid_alerts": 0, "mean_pipeline_latency_ms": 0.0},
+                health={"subsystems": {"queue_driver": "offline", "alert_sink_driver": "offline", "archiver_driver": "offline", "worker_thread_running": False}},
+            )
 
     with tab_xai:
         st.subheader("Explainable AI (XAI) Attribution")
