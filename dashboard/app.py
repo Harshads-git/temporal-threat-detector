@@ -20,9 +20,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import time
 import streamlit as st
 from dashboard.api_client import DashboardApiClient
 from dashboard.components.alert_cards import render_alert_feed, render_xai_deep_dive
+from dashboard.components.attack_injector import render_attack_injector_panel
 from dashboard.components.metrics_panel import render_kpi_ribbon
 from dashboard.components.timeline_chart import render_temporal_timeline
 
@@ -206,8 +208,7 @@ def main() -> None:
         render_xai_deep_dive(alerts=alerts, client=client)
 
     with tab_inject:
-        st.subheader("Attack Simulation & Telemetry Injection")
-        st.info("Inject controlled cyber attacks into the live telemetry stream to observe pipeline response.")
+        render_attack_injector_panel(client=client)
 
     with tab_arch:
         st.subheader("Architectural Topology")
@@ -238,6 +239,11 @@ def main() -> None:
                         [ DynamoDB / Alert Sink ]
         ```
         """)
+
+    # Auto-refresh loop
+    if settings.get("auto_refresh", False):
+        time.sleep(settings.get("refresh_rate", 5))
+        st.rerun()
 
 
 if __name__ == "__main__":
