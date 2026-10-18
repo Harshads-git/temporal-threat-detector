@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import streamlit as st
 from dashboard.api_client import DashboardApiClient
+from dashboard.components.alert_cards import render_alert_feed, render_xai_deep_dive
 from dashboard.components.metrics_panel import render_kpi_ribbon
 from dashboard.components.timeline_chart import render_temporal_timeline
 
@@ -198,9 +199,11 @@ def main() -> None:
         st.markdown("---")
         render_temporal_timeline(alerts=alerts)
 
+        st.markdown("---")
+        render_alert_feed(alerts=alerts, client=client)
+
     with tab_xai:
-        st.subheader("Explainable AI (XAI) Attribution")
-        st.info("Select an active alert from the live feed to inspect its SHAP feature importance attribution and mitigation playbooks.")
+        render_xai_deep_dive(alerts=alerts, client=client)
 
     with tab_inject:
         st.subheader("Attack Simulation & Telemetry Injection")
