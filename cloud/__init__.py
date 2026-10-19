@@ -22,6 +22,7 @@ from cloud.storage_sink import (
     get_alert_sink,
     get_telemetry_archiver,
 )
+from cloud.provisioner import CloudResourceProvisioner
 
 __all__ = [
     # Storage Sinks & Archivers
@@ -44,4 +45,6 @@ __all__ = [
     "BackoffPolicy",
     "WorkerMetrics",
     "TelemetryIngestionWorker",
+    # Infrastructure Provisioning
+    "CloudResourceProvisioner",
 ]
