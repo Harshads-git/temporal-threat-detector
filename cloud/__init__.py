@@ -23,6 +23,12 @@ from cloud.storage_sink import (
     get_telemetry_archiver,
 )
 from cloud.provisioner import CloudResourceProvisioner
+from cloud.config import (
+    CloudInfrastructureStack,
+    CloudSettings,
+    build_cloud_stack,
+    detect_active_environment,
+)
 
 __all__ = [
     # Storage Sinks & Archivers
@@ -45,6 +51,10 @@ __all__ = [
     "BackoffPolicy",
     "WorkerMetrics",
     "TelemetryIngestionWorker",
-    # Infrastructure Provisioning
+    # Infrastructure Provisioning & Config
     "CloudResourceProvisioner",
+    "CloudSettings",
+    "CloudInfrastructureStack",
+    "build_cloud_stack",
+    "detect_active_environment",
 ]
