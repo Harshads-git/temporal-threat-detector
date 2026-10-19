@@ -195,7 +195,7 @@ def build_cloud_stack(
         )
     elif cfg.driver_mode == "local":
         queue = InMemoryQueueConsumer()
-        alert_sink = LocalJsonAlertSink(filepath=str(cfg.local_storage_dir / "threat_alerts.jsonl"))
+        alert_sink = LocalJsonAlertSink(file_path=str(cfg.local_storage_dir / "threat_alerts.jsonl"))
         archiver = LocalFileTelemetryArchiver(base_dir=str(cfg.local_storage_dir / "raw"))
     else:  # "in-memory" or fallback
         queue = InMemoryQueueConsumer()
