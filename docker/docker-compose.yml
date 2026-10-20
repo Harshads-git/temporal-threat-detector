@@ -1,0 +1,129 @@
+version: "3.8"
+
+# ==============================================================================
+# Container Orchestration: Temporal Anomaly & Threat Detector
+# Stack: LocalStack (AWS Emulation) + Cloud Init + FastAPI Backend + Streamlit UI
+# ==============================================================================
+
+services:
+  # 1. LocalStack: Local AWS Cloud Infrastructure (SQS + DynamoDB + S3)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: threat_detector_localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs,dynamodb,s3
+      - DEFAULT_REGION=us-east-1
+      - PERSISTENCE=0
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4566/_localstack/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    networks:
+      - threat-net
+
+  # 2. Cloud Provisioner: Automated Idempotent Cloud Resource Initialization
+  cloud-init:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: threat_detector_cloud_init
+    command:
+      - python
+      - -m
+      - cloud.provisioner
+      - --action
+      - provision
+      - --endpoint-url
+      - http://localstack:4566
+      - --region
+      - us-east-1
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+    depends_on:
+      localstack:
+        condition: service_healthy
+    networks:
+      - threat-net
+    restart: on-failure
+
+  # 3. FastAPI Core Detection Service & Telemetry Queue Consumer Worker
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: threat_detector_api
+    command:
+      - uvicorn
+      - api.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    ports:
+      - "8000:8000"
+    environment:
+      - TELEMETRY_DRIVER_MODE=localstack
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - PORT=8000
+    depends_on:
+      localstack:
+        condition: service_healthy
+      cloud-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - threat-net
+
+  # 4. Streamlit Interactive Explainable AI Dashboard & Live Visualizer
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: threat_detector_dashboard
+    command:
+      - streamlit
+      - run
+      - dashboard/app.py
+      - --server.port=8501
+      - --server.address=0.0.0.0
+      - --server.headless=true
+    ports:
+      - "8501:8501"
+    environment:
+      - DETECTOR_API_URL=http://api:8000
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8501/_stcore/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - threat-net
+
+networks:
+  threat-net:
+    driver: bridge
+    name: temporal_threat_detector_net
