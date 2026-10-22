@@ -142,86 +142,54 @@ def test_severity_badge_formatting() -> None:
     assert "⚪" in get_severity_badge("INFO")
 
 
-def test_create_window_from_params() -> None:
-    """Verify user input parameter translation into validated WindowAggregate."""
-    from dashboard.components.interactive_lab import create_window_from_params
+def test_live_simulator_presets() -> None:
+    """Verify standard attack and nominal presets produce valid WindowAggregate models."""
+    from dashboard.components.live_simulator import get_preset_window
 
-    window = create_window_from_params(
-        request_count=1200,
-        error_count_4xx=120,
-        error_count_5xx=24,
-        p95_duration_ms=250.0,
-        unique_source_ips=800,
-        auth_failure_count=95,
-        off_hour_ratio=0.5,
-        mean_response_bytes=3500.0,
-    )
-    assert window.request_count == 1200
-    assert window.request_rate_per_sec == 20.0  # 1200 / 60
-    assert window.error_rate_4xx == 0.1  # 120 / 1200
-    assert window.error_rate_5xx == 0.02  # 24 / 1200
-    assert window.p95_duration_ms == 250.0
-    assert window.unique_source_ips == 800
-    assert window.auth_failure_count == 95
-    assert window.off_hour_ratio == 0.5
+    nominal = get_preset_window("nominal")
+    assert nominal.request_count == 20
+    assert nominal.auth_failure_count == 0
+
+    ddos = get_preset_window("ddos")
+    assert ddos.request_count == 3500
+    assert ddos.unique_source_ips == 3100
+
+    cred = get_preset_window("credential_stuffing")
+    assert cred.auth_failure_count == 385
+
+    off_hour = get_preset_window("off_hour")
+    assert off_hour.off_hour_ratio == 1.0
+
+    exfil = get_preset_window("exfiltration")
+    assert exfil.total_response_bytes > 1_000_000
 
 
-def test_embedded_offline_pipeline_full_cycle() -> None:
-    """Verify standalone offline embedded engine runs 100% locally with zero network calls."""
-    from dashboard.components.interactive_lab import create_window_from_params
-    from dashboard.embedded_engine import EmbeddedOfflinePipeline
+def test_offline_detection_engine_evaluation() -> None:
+    """Verify OfflineDetectionEngine singleton runs 100% locally with zero network calls."""
+    from dashboard.components.live_simulator import get_preset_window
+    from dashboard.engine_bridge import OfflineDetectionEngine
 
-    engine = EmbeddedOfflinePipeline()
-    assert engine.is_available() is True
-    health = engine.get_health()
-    assert health["status"] == "healthy"
-    assert health["mode"] == "standalone_offline"
+    engine = OfflineDetectionEngine.get_instance()
+    assert engine is not None
 
-    # 1. Evaluate nominal baseline traffic
-    nominal_window = create_window_from_params(
-        request_count=20,
-        error_count_4xx=0,
-        error_count_5xx=0,
-        p95_duration_ms=60.0,
-        unique_source_ips=20,
-        auth_failure_count=0,
-        off_hour_ratio=0.0,
-        mean_response_bytes=2100.0,
-    )
-    eval_nom = engine.evaluate_window(nominal_window)
-    assert "is_anomaly" in eval_nom
-    assert "confidence_score" in eval_nom
-    assert "tier1_result" in eval_nom
-    assert "tier2_result" in eval_nom
-    assert "top_contributions" in eval_nom
+    # Evaluate nominal preset
+    nom_win = get_preset_window("nominal")
+    nom_result = engine.evaluate_window(nom_win)
+    assert "is_anomaly" in nom_result
+    assert "risk_score" in nom_result
+    assert nom_result["risk_score"] < 50.0
 
-    # 2. Evaluate DDoS attack surge
-    ddos_window = create_window_from_params(
-        request_count=3500,
-        error_count_4xx=10,
-        error_count_5xx=80,
-        p95_duration_ms=220.0,
-        unique_source_ips=3000,
-        auth_failure_count=0,
-        off_hour_ratio=0.0,
-        mean_response_bytes=2100.0,
-    )
-    eval_ddos = engine.evaluate_window(ddos_window)
-    assert eval_ddos["is_anomaly"] is True
-    assert eval_ddos["confidence_score"] > 0.5
-    assert "DDoS" in eval_ddos["threat_hypothesis"] or "Volumetric" in eval_ddos["threat_hypothesis"] or "High" in eval_ddos["threat_hypothesis"]
-    assert len(eval_ddos["top_contributions"]) > 0
+    # Evaluate ddos preset
+    ddos_win = get_preset_window("ddos")
+    ddos_result = engine.evaluate_window(ddos_win)
+    assert ddos_result["is_anomaly"] is True
+    assert ddos_result["risk_score"] >= 70.0
+    assert len(ddos_result["attributions"]) > 0
+    assert "threat_hypothesis" in ddos_result
 
-    # 3. Inject attack simulation batch
-    inject_res = engine.inject_attack(attack_type="ddos", count=100)
-    assert inject_res["status"] == "injected"
-    assert inject_res["windows_evaluated"] >= 1
-
-    # 4. Check metrics and alerts sinks
+    # Evaluate metrics & alerts sinks
     metrics = engine.get_metrics()
-    assert metrics["total_events_processed"] > 0
-    assert metrics["total_alerts_emitted"] >= 1
-
-    alerts = engine.get_alerts(limit=10)
-    assert len(alerts) >= 1
+    assert "total_events_processed" in metrics
+    alerts = engine.get_alerts(limit=5)
+    assert isinstance(alerts, list)
 

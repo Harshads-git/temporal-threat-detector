@@ -14,11 +14,11 @@ A production-ready, event-driven temporal anomaly detection pipeline that ingest
 
 ## 🌐 Modern Localhost Website & 100% Offline Interactive Workbench
 
-The project features a **modern, minimal website on `localhost:8501`** that runs **100% offline** with **zero internet connection** and zero cloud dependencies:
+The project features a **modern, minimal website on `http://localhost:8501`** that runs **100% offline** with **zero internet connection** and zero cloud dependencies:
 
 ```bash
-# 1-Click Launch on Windows (Command Prompt / Explorer):
-run_website.bat
+# 1-Click Launch on Windows (Command Prompt / File Explorer):
+launch_website.bat
 
 # Or Windows PowerShell:
 .\run_website.ps1
@@ -30,17 +30,17 @@ chmod +x run_website.sh && ./run_website.sh
 streamlit run dashboard/app.py --server.port 8501
 ```
 
-### 🎯 Interactive Lab: User Input ➔ AI Output Breakdown
-The primary tab of the website provides a side-by-side interactive threat simulation lab:
+### 🎯 Live Input ➔ Output Threat Simulator
+The primary tab of the website provides a real-time, interactive simulation workbench:
 - **📥 Left Column (What You Give as Input as a User)**:
   - **Attack Vector Presets**: 🟢 Nominal Baseline, 🌊 Volumetric DDoS HTTP Flood, 🔑 Credential Stuffing & Auth Flooding, 🕵️ Off-Hour Reconnaissance Probing, 💾 Massive Data Exfiltration.
-  - **Fine-Tuning Telemetry Sliders**: Request Volume ($5 - 5,000$), Error Counts ($4\text{xx} / 5\text{xx}$), Latency P95 ($10 - 1500\text{ ms}$), Unique Source IPs, Auth Failures ($401/403$), Off-Hour Activity Ratio ($0.0 - 1.0$), and Response Bytes.
-  - **Formatted Telemetry Vector Card**: Real-time structured telemetry payload dispatched to the detection models.
-- **📤 Right Column (What You Get as Output from the AI System)**:
-  - **Detection Verdict Banner**: Glowing Red Threat Alert (Hypothesis, Severity, Confidence Score) or Green Nominal Workload pass.
-  - **Dual-Tier Multi-Engine Arbitration**: Side-by-side diagnostic cards for **Tier 1 (Statistical MAD / EWMA)** and **Tier 2 (Unsupervised Isolation Forest)**.
+  - **Fine-Tuning Telemetry Sliders**: Request Count ($5 - 5,000$), Error Counts ($4\text{xx} / 5\text{xx}$), Latency P95 ($10 - 1500\text{ ms}$), Unique Source IPs, Auth Failures ($401/403$), Off-Hour Activity Ratio ($0.0 - 1.0$), and Response Bytes.
+  - **Raw JSON Input Inspector**: Real-time expandable view of the dispatched telemetry vector.
+- **📤 Right Column (What You Get as Output from the AI Pipeline)**:
+  - **Visual Threat Risk Meter**: Modern circular Plotly gauge meter ($0 - 100$) with dynamic color transitions (Green/Yellow/Red).
+  - **Multi-Tier Pipeline Stepper**: Visual diagnostic breakdown for **Tier 1 (Statistical MAD / EWMA)**, **Tier 2 (Isolation Forest)**, and the **Hybrid Ensemble**.
   - **Explainable AI (XAI) Attribution**: Horizontal Plotly bar chart rendering real-time additive SHAP importance values ($\phi_i$) showing exactly which telemetric dimensions triggered the alert.
-  - **Semantic AI Reasoning Narrative**: Clear plain-English threat summary.
+  - **Semantic AI Reasoning Narrative**: Clear plain-English threat hypothesis.
   - **Automated Cloud Mitigation Playbook**: Concrete remediation actions (AWS WAF rate limits, IAM credential revocation, VPC isolation).
   - **Raw Machine-Readable JSON Output**: Complete serialized inference payload.
 
@@ -99,6 +99,7 @@ In enterprise SOC environments, machine learning alerts are often ignored due to
 - **Incident Response Playbooks**: Automatically generates actionable cloud mitigation steps (AWS WAF rate-limiting rules, IAM credential rotation, VPC security group quarantining).
 
 ### 3. Interactive Streamlit Security Operations Dashboard
+- **Live Input ➔ Output Threat Simulator**: Real-time interactive playground for adjusting parameters and inspecting decisions.
 - **KPI Metrics Ribbon**: Live operational counters for processed logs, queue depth, active alerts, and component latencies.
 - **Plotly Dual-Axis Timeline**: Real-time traffic rate and latency graphs with overlaid anomaly scatter markers.
 - **Interactive Attack Injection Center**: Fire synthetic attacks (**DDoS**, **Credential Stuffing**, **Off-Hour Probing**, **Data Exfiltration**) with selectable burst profiles directly from the UI.
@@ -112,24 +113,24 @@ In enterprise SOC environments, machine learning alerts are often ignored due to
 
 ## 🚀 Quickstart & Run Commands
 
-### 1. Single-Command Local Presentation Runner (Windows)
+### 1. 1-Click Offline Localhost Website (Windows)
+```cmd
+launch_website.bat
+```
+*Spins up Streamlit at `http://localhost:8501`, opens your browser automatically, and runs 100% offline in-process.*
+
+### 2. Single-Command Local Verification Runner (Windows)
 ```cmd
 run_demo.bat
 ```
-*Validates the environment, runs all 108 unit/integration tests, generates synthetic diurnal telemetry, and displays startup instructions.*
+*Validates the environment, runs automated unit/integration tests, generates synthetic diurnal telemetry, and displays startup instructions.*
 
-### 2. Launch FastAPI Detection Engine
+### 3. Launch FastAPI Detection Engine
 ```bash
 uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 - Interactive Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Health Check Probe: [http://localhost:8000/health](http://localhost:8000/health)
-
-### 3. Launch Streamlit Live Dashboard
-```bash
-streamlit run dashboard/app.py
-```
-- Dashboard URL: [http://localhost:8501](http://localhost:8501)
 
 ### 4. Full Multi-Container Stack (Docker Compose)
 Spins up **LocalStack (SQS + DynamoDB + S3)**, the **Cloud Provisioner**, **FastAPI Backend**, and **Streamlit Dashboard**:
@@ -204,8 +205,8 @@ temporal-threat-detector/
 ├── dashboard/
 │   ├── app.py                     # Streamlit live visualizer & operational UI
 │   ├── api_client.py              # Resilient HTTP client for FastAPI backend
-│   ├── embedded_engine.py         # 100% Offline in-memory ML & SHAP detection pipeline
-│   └── components/                # Modular UI components (Interactive Lab, KPIs, Timeline, Alerts, Injector)
+│   ├── engine_bridge.py           # 100% Offline in-memory ML & SHAP detection pipeline
+│   └── components/                # Modular UI components (Live Simulator, KPIs, Timeline, Alerts, Injector)
 ├── docker/
 │   ├── Dockerfile                 # Multi-stage production Dockerfile (non-root appuser)
 │   ├── docker-compose.yml         # Container orchestration (LocalStack + API + Dashboard)
@@ -218,6 +219,7 @@ temporal-threat-detector/
 │   └── VIVA_PRESENTATION_GUIDE.md # Viva defense script, demo walkthrough & Q&A
 ├── tests/                         # 114 automated unit and integration tests (100% green)
 ├── requirements.txt               # Production Python dependencies
+├── launch_website.bat             # 1-click 100% Offline Localhost Website launcher (Windows)
 ├── run_website.bat                # 1-click 100% Offline Localhost Website launcher (Windows)
 ├── run_website.ps1                # 1-click 100% Offline Localhost Website launcher (PowerShell)
 ├── run_website.sh                 # 1-click 100% Offline Localhost Website launcher (Linux/macOS)

@@ -26,9 +26,9 @@ echo ===========================================================================
 echo [+] Pipeline verification complete. Ready for live demonstration!
 echo ================================================================================
 echo.
-echo [*] To spin up the FastAPI Backend Service:
-echo     uvicorn api.main:app --port 8000 --reload
+echo [*] To spin up the 100%% Offline Localhost Website (Streamlit):
+echo     launch_website.bat   (or: streamlit run dashboard/app.py)
 echo.
-echo [*] To spin up the Streamlit Live Dashboard:
-echo     streamlit run dashboard/app.py
+echo [*] (Optional) To spin up the FastAPI Backend Service:
+echo     uvicorn api.main:app --port 8000 --reload
 echo ================================================================================

@@ -7,7 +7,10 @@ import streamlit as st
 from dashboard.api_client import DashboardApiClient
 
 
-def render_attack_injector_panel(client: DashboardApiClient) -> None:
+def render_attack_injector_panel(
+    client: DashboardApiClient,
+    engine: Optional[Any] = None,
+) -> None:
     """Render interactive attack injection triggers and parameter controls."""
     st.subheader("Interactive Attack Simulator & Traffic Injector")
     st.markdown(
@@ -81,25 +84,40 @@ def render_attack_injector_panel(client: DashboardApiClient) -> None:
 
         st.markdown("### 3. Dispatch Threat")
         if st.button("🔥 INJECT THREAT INTO LIVE WORKLOAD", type="primary", use_container_width=True):
-            with st.spinner("Generating attack telemetry and publishing to engine..."):
-                try:
+            if client.is_available():
+                with st.spinner("Generating attack telemetry and publishing to queue..."):
                     result = client.inject_attack(
                         attack_type=attack_type,
                         burst_profile=burst_profile,
                         count=count,
                     )
-                    status = result.get("status")
-                    if status in ("injected", "accepted"):
-                        batch_id = result.get("batch_id", f"offline-{attack_type}-batch")
-                        st.success(
-                            f"✅ **Attack Injected Successfully!**\n\n"
-                            f"- **Type:** `{attack_type}`\n"
-                            f"- **Count:** `{count}` events evaluated\n"
-                            f"- **Batch ID:** `{batch_id}`\n\n"
-                            "The engine has aggregated these events into the sliding window and updated threat detections."
-                        )
-                        st.toast(f"Injected {count} {attack_type} events!", icon="🔥")
-                    else:
-                        st.error(f"Failed to inject attack: {result.get('message', 'Unknown error')}")
-                except Exception as err:
-                    st.error(f"Error injecting attack: {err}")
+
+                if result.get("status") in ("injected", "accepted"):
+                    st.success(
+                        f"✅ **Attack Injected via API Successfully!**\n\n"
+                        f"- **Type:** `{attack_type}`\n"
+                        f"- **Count:** `{count}` events dispatched\n"
+                        f"- **Batch ID:** `{result.get('batch_id')}`\n\n"
+                        "The background worker will aggregate these events into the sliding window and trigger alerts."
+                    )
+                    st.toast(f"Injected {count} {attack_type} events!", icon="🔥")
+                else:
+                    st.error(f"Failed to inject attack: {result.get('message', 'Unknown error')}")
+            elif engine is not None:
+                with st.spinner("Evaluating attack vector with offline in-memory pipeline..."):
+                    result = engine.inject_attack_batch(
+                        attack_type=attack_type,
+                        burst_profile=burst_profile,
+                        count=count,
+                    )
+                st.success(
+                    f"✅ **Attack Evaluated Offline In-Memory!**\n\n"
+                    f"- **Type:** `{attack_type}`\n"
+                    f"- **Events Processed:** `{result.get('events_count')}`\n"
+                    f"- **Windows Evaluated:** `{result.get('windows_count')}`\n"
+                    f"- **Flagged Anomalous Windows:** `{result.get('flagged_windows')}`\n\n"
+                    "Alert sink and KPI metrics updated in real-time."
+                )
+                st.toast(f"Offline Injected {count} {attack_type} events!", icon="🛡️")
+            else:
+                st.error("No active detection engine available.")
