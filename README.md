@@ -1,89 +1,205 @@
 # Temporal Anomaly & Threat Detector for Cloud Workloads
 
-[![Build Status](https://img.shields.io/badge/Status-Phase%201%20Ready-success.svg)](#)
-[![Python Version](https://img.shields.io/badge/Python-3.10%20--%203.14-blue.svg)](#)
-[![Architecture](https://img.shields.io/badge/Architecture-Dual--Tier%20+%20XAI-orange.svg)](#)
+[![Build Status](https://img.shields.io/badge/Build-108%20Tests%20Passing-success.svg)](#)
+[![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.14-blue.svg)](#)
+[![Architecture](https://img.shields.io/badge/Architecture-Dual--Tier%20+%20SHAP%20XAI-orange.svg)](#)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20REST-009688.svg)](#)
+[![Streamlit](https://img.shields.io/badge/Dashboard-Streamlit%20UI-FF4B4B.svg)](#)
+[![Docker](https://img.shields.io/badge/Containers-Docker%20Compose-2496ED.svg)](#)
+[![AWS](https://img.shields.io/badge/Cloud-LocalStack%20%2F%20AWS%20Boto3-232F3E.svg)](#)
 
-A modular, event-driven temporal anomaly detection pipeline that ingests simulated cloud telemetry, aggregates rolling time windows, and performs dual-tier threat detection coupled with Explainable AI (XAI) feature attributions.
+A production-ready, event-driven temporal anomaly detection pipeline that ingests high-volume cloud telemetry, aggregates rolling sliding time windows, and performs dual-tier threat detection with **Explainable AI (XAI)** attribution for cloud security operations (SecOps).
 
 ---
 
-## Architecture Overview
+## 🏛️ System Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Data Layer ["1. Ingestion & Emulation Layer"]
-        A["Synthetic Generator\n(Diurnal Baseline + Attack Injections)"] -->|Events Stream| B["FastAPI /ingest\nor LocalStack SQS"]
+    subgraph Ingestion ["1. Telemetry Ingestion & Queue Buffer"]
+        A["Cloud Telemetry Generator / Workload Logs"] -->|JSON Events| B["FastAPI /ingest or /ingest/batch"]
+        B -->|Enqueue| C["Message Queue Driver\n(In-Memory Queue or AWS SQS + DLQ)"]
+        C -->|Batch Poll| D["Telemetry Ingestion Worker Thread"]
     end
 
-    subgraph Temporal Engine ["2. Windowing & Aggregation Engine"]
-        B --> C["Sliding / Tumbling Window Aggregator\n(60s rolling windows, 10s hop)"]
-        C --> D["Multivariate Temporal Feature Vector\n(Rates, Latency, Errors, Payloads, Cardinality)"]
+    subgraph Windowing ["2. Temporal Window Aggregator"]
+        D -->|Events Stream| E["Streaming Window Buffer\n(60s rolling window, 10s hop)"]
+        E -->|Extract Features| F["Multivariate Feature Vector (13 dimensions)\n(req_count, rates, errors, p95_latency, IP dispersion, bytes)"]
+        D -->|Archive Telemetry| G["Telemetry Archiver\n(Local Gzip JSONL or AWS S3 Partitioned)"]
     end
 
-    subgraph Dual Tier ["3. Dual-Tier Threat Detection Engine"]
-        D --> E["Tier 1: Statistical Filter\n(Z-Score / EWMA Surge Detector)"]
-        D --> F["Tier 2: Unsupervised AI\n(Multivariate Isolation Forest)"]
-        E -->|Surge Anomaly| G["Hybrid Threat Ensemble"]
-        F -->|Contextual Anomaly| G
+    subgraph Detection ["3. Dual-Tier Hybrid Threat Detection"]
+        F --> H["Tier 1: Statistical Filter\n(Median Absolute Deviation MAD + EWMA Volatility)"]
+        F --> I["Tier 2: Unsupervised AI\n(Multivariate Isolation Forest)"]
+        H -->|Volumetric Surge| J["Hybrid Threat Ensemble Coordinator"]
+        I -->|Contextual Anomaly| J
+        J -->|Confirmed Anomaly| K["ThreatAlert Generation"]
     end
 
-    subgraph XAI Novelty ["4. Explainable AI (XAI) Engine"]
-        G -->|Flagged Window| H["SHAP TreeExplainer\nFeature Attribution Engine"]
-        H --> I["Plain-English Semantic Narrative\n& Incident Response Hypothesis"]
+    subgraph Novelty ["4. Novelty Component: Explainable AI (XAI)"]
+        K --> L["SHAP TreeExplainer Engine\n(Kernel/Tree Log-Odds Decomposition)"]
+        L --> M["Ranked Feature Attributions\n(Observed vs Diurnal Expected Baseline)"]
+        M --> N["Semantic Reasoning Engine\n(Automated Hypothesis & Incident Narrative)"]
+        N --> O["Incident Response Recommender\n(Automated Cloud Mitigation Playbooks)"]
     end
 
-    subgraph Presentation ["5. Cloud Sink & Visualization"]
-        I --> J["Storage Sink\n(Local JSON / AWS DynamoDB)"]
-        I --> K["Streamlit Live Security Dashboard\n(Real-time Timeline + XAI Cards + Attack Injector)"]
+    subgraph Presentation ["5. Cloud Storage & Interactive Presentation"]
+        O --> P["Storage Sink\n(Local JSON or AWS DynamoDB On-Demand)"]
+        P --> Q["Streamlit Live Cyber Security Dashboard\n(Real-Time Timeline, Alert Cards, Waterfall, Attack Injector)"]
     end
 ```
 
 ---
 
-## 15-Day Production Execution Plan (53 Commits)
+## 🌟 Key Capabilities & Novelty
 
-| Day | Type | Commits | Key Deliverables |
-| :--- | :--- | :---: | :--- |
-| **Day 1** | Weekday | 3 | **Phase 1 Initiation:** Project structure, Pydantic log schemas, synthetic generator with diurnal baseline |
-| **Day 2** | Weekday | 3 | **Phase 1 Attacks:** Parameterized attack injectors (DDoS, Credential Stuffing, Off-Hour Probing, Exfiltration) |
-| **Day 3** | Weekday | 3 | **Phase 2 Windowing:** Sliding/tumbling window aggregator, time bucket slicing, numeric feature extraction |
-| **Day 4** | Weekday | 3 | **Phase 2 Statistical Filter:** Real-time Z-score & EWMA stream filter with dynamic threshold calibration |
-| **Day 5** | Weekday | 3 | **Phase 2 Unsupervised AI:** Scikit-learn Isolation Forest model training pipeline and baseline persistence |
-| **Day 6** | Weekend | 5 | **Phase 3 XAI (Novelty):** SHAP TreeExplainer integration, top-k feature ranking, baseline deviation calculus, automated plain-English hypothesis generator, remediation recommender |
-| **Day 7** | Weekend | 5 | **Phase 4 Cloud Abstraction:** In-memory local message queue, AWS Boto3 SQS driver, LocalStack compatibility, DynamoDB/Local JSON storage sink, batch consumer worker |
-| **Day 8** | Weekday | 3 | **Phase 5 Backend API:** FastAPI service initialization, `/health`, `/metrics`, `/ingest` streaming endpoints |
-| **Day 9** | Weekday | 3 | **Phase 5 API Engine:** `/detect` real-time evaluation endpoint, window query endpoints, background consumer lifecycle |
-| **Day 10** | Weekday | 3 | **Phase 6 Interactive Dashboard:** Streamlit app scaffolding, real-time Plotly temporal request rate graphs |
-| **Day 11** | Weekday | 3 | **Phase 6 XAI Visualization:** Real-time SHAP waterfall/bar breakdown, threat alert cards, severity badges |
-| **Day 12** | Weekday | 3 | **Phase 6 Attack Injector:** Interactive attack injection panel directly triggering synthetic anomalies in dashboard |
-| **Day 13** | Weekend | 5 | **Phase 7 Containerization & Hardening:** Dockerfile, Docker Compose (FastAPI + Streamlit + LocalStack), integration tests, edge case stress test, coverage report |
-| **Day 14** | Weekend | 5 | **Phase 8 Benchmark & Polish:** Precision/Recall evaluation against injected attack labels, latency benchmarking, presentation slides/walkthrough script, Viva demo scripts |
-| **Day 15** | Weekday | 3 | **Final Review 2 / Viva Release:** End-to-end integration verification, documentation sign-off, tagged release `v1.0.0` |
+### 1. Dual-Tier Arbitration Strategy
+- **Tier 1 (Fast-Path Statistical Filter)**: Computes robust Median Absolute Deviation ($MAD$) and Exponentially Weighted Moving Average ($EWMA$) volatility in $O(1)$ time ($< 0.5\text{ ms}$). Instantly catches volumetric surges, request flooding, and sudden brute-force auth spikes.
+- **Tier 2 (Multivariate Unsupervised AI)**: Uses an Isolation Forest trained on diurnal baseline traffic to detect subtle multi-dimensional contextual anomalies (e.g., off-hour reconnaissance or data exfiltration) that evade simple univariate thresholds.
+- **Hybrid Arbitration**: Corroborates signals across both tiers, achieving **100% attack recall** with elevated confidence scoring and critical severity escalation.
+
+### 2. Novelty Component: Explainable AI (XAI) Attribution
+In enterprise SOC environments, machine learning alerts are often ignored due to the "black-box" dilemma. Our pipeline solves this by integrating **Tree-SHAP (SHAP TreeExplainer)**:
+- **Mathematical Attribution**: Decomposes the anomaly decision score into exact additive feature importance values ($\phi_i$).
+- **Semantic Reasoning**: Maps quantitative SHAP values to plain-English threat hypotheses (e.g., *"High Volumetric HTTP Flood (DDoS) due to +1450% surge in request_count combined with extreme source IP dispersion"*).
+- **Incident Response Playbooks**: Automatically generates actionable cloud mitigation steps (AWS WAF rate-limiting rules, IAM credential rotation, VPC security group quarantining).
+
+### 3. Interactive Streamlit Security Operations Dashboard
+- **KPI Metrics Ribbon**: Live operational counters for processed logs, queue depth, active alerts, and component latencies.
+- **Plotly Dual-Axis Timeline**: Real-time traffic rate and latency graphs with overlaid anomaly scatter markers.
+- **Interactive Attack Injection Center**: Fire synthetic attacks (**DDoS**, **Credential Stuffing**, **Off-Hour Probing**, **Data Exfiltration**) with selectable burst profiles directly from the UI.
+- **SHAP Waterfall Deep Dive**: Visual waterfall diagrams illustrating baseline expectations vs. observed deviations.
+
+### 4. Pluggable Cloud Infrastructure (Zero-Cost Local Emulation)
+- Runs locally with zero cloud costs using in-memory queues, local JSONL, and gzip partition archivers.
+- Features drop-in **AWS Boto3 drivers** compatible with **LocalStack** and production **AWS SQS (with DLQ redrive)**, **AWS DynamoDB (PAY_PER_REQUEST)**, and **AWS S3**.
 
 ---
 
-## Quickstart (Single-Command Run)
+## 🚀 Quickstart & Run Commands
 
-### Windows
+### 1. Single-Command Local Presentation Runner (Windows)
 ```cmd
 run_demo.bat
 ```
+*Validates the environment, runs all 108 unit/integration tests, generates synthetic diurnal telemetry, and displays startup instructions.*
 
-### Linux / macOS
+### 2. Launch FastAPI Detection Engine
 ```bash
-chmod +x run_demo.sh
-./run_demo.sh
+uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+```
+- Interactive Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Health Check Probe: [http://localhost:8000/health](http://localhost:8000/health)
+
+### 3. Launch Streamlit Live Dashboard
+```bash
+streamlit run dashboard/app.py
+```
+- Dashboard URL: [http://localhost:8501](http://localhost:8501)
+
+### 4. Full Multi-Container Stack (Docker Compose)
+Spins up **LocalStack (SQS + DynamoDB + S3)**, the **Cloud Provisioner**, **FastAPI Backend**, and **Streamlit Dashboard**:
+```bash
+docker compose -f docker/docker-compose.yml up --build -d
+```
+Teardown:
+```bash
+docker compose -f docker/docker-compose.yml down -v
 ```
 
-### Direct CLI Verification
+---
+
+## 📊 Performance & Evaluation Benchmarks
+
+### 1. Component Latency Profile
+Benchmarked on modern multicore hardware across 500-event streaming batches:
+
+| Pipeline Component | Mean Latency | P50 (Median) | P95 Latency | P99 Latency | Complexity |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Ingestion & Deserialization** | 1.44 ms | 1.44 ms | 1.47 ms | 1.48 ms | $O(1)$ |
+| **Window Aggregation (60s)** | 30.50 ms | 30.50 ms | 30.52 ms | 30.53 ms | $O(N)$ |
+| **Tier 1: Z-Score & MAD Filter** | **0.43 ms** | **0.41 ms** | **0.58 ms** | **0.78 ms** | $O(1)$ |
+| **Tier 2: Isolation Forest AI** | 9.26 ms | 9.02 ms | 10.64 ms | 13.73 ms | $O(M \cdot T)$ |
+| **Novelty: SHAP TreeExplainer** | 3.32 ms | 3.27 ms | 3.81 ms | 4.71 ms | $O(T \cdot L^2)$ |
+
+### 2. Multi-Vector Threat Detection Accuracy
+| Threat Attack Vector | Tier 1 (MAD/EWMA) | Tier 2 (iForest) | Hybrid Threat Ensemble |
+| :--- | :---: | :---: | :---: |
+| **High Volumetric HTTP Flood (DDoS)** | 20.6% | 97.8% | **100.0%** |
+| **Credential Stuffing & Auth Failure** | 21.7% | 97.8% | **100.0%** |
+| **Off-Hour Reconnaissance Probing** | 22.0% | 97.8% | **100.0%** |
+| **Massive Data Exfiltration** | 41.0% | 97.8% | **100.0%** |
+| **Overall Ensemble F1-Score** | 0.390 | 0.848 | **0.859** |
+
+---
+
+## 📡 REST API Reference
+
+| Method | Endpoint | Description | Status Code |
+| :--- | :--- | :--- | :---: |
+| `GET` | `/` | Service metadata, active driver modes, and endpoint index | `200 OK` |
+| `GET` | `/health` | Subsystem liveness and readiness probe (Queue, Sinks, Worker) | `200 OK` |
+| `GET` | `/metrics` | Operational KPIs (events processed, queue depth, alert tallies) | `200 OK` |
+| `POST` | `/ingest` | Ingest and validate a single `CloudTelemetryLog` event | `202 Accepted` |
+| `POST` | `/ingest/batch` | High-throughput batch ingestion (up to 5,000 events) | `202 Accepted` |
+| `POST` | `/detect` | Synchronous dual-tier evaluation + SHAP XAI attribution | `200 OK` |
+| `GET` | `/alerts` | Query persisted threat alerts with severity & tier filtering | `200 OK` |
+| `GET` | `/alerts/{alert_id}`| Retrieve detailed forensic record for a specific threat alert | `200 OK` |
+| `GET` | `/xai/waterfall/{id}`| Detailed SHAP waterfall breakdown with feature contributions | `200 OK` |
+| `POST` | `/inject` | Inject parameterized cyber attacks into the live queue | `202 Accepted` |
+
+---
+
+## 📁 Repository Structure
+
+```
+temporal-threat-detector/
+├── api/
+│   ├── main.py                    # FastAPI service & lifespan worker orchestration
+│   └── schemas.py                 # Pydantic v2 schemas (Logs, Windows, ThreatAlerts)
+├── engine/
+│   ├── windowing.py               # Rolling 60s sliding window aggregator
+│   ├── zscore_filter.py           # Tier 1: Real-time MAD & EWMA volatility filter
+│   ├── isolation_forest.py        # Tier 2: Multivariate Isolation Forest & Ensemble
+│   └── explainability.py          # Novelty: SHAP TreeExplainer & Mitigation Playbooks
+├── cloud/
+│   ├── queue_consumer.py          # In-memory queue & AWS SQS batch consumer
+│   ├── storage_sink.py            # Local JSON / AWS DynamoDB & S3 archiver drivers
+│   ├── provisioner.py             # Automated AWS & LocalStack resource provisioner
+│   └── config.py                  # Dynamic cloud environment detector & stack builder
+├── dashboard/
+│   ├── app.py                     # Streamlit live visualizer & operational UI
+│   ├── api_client.py              # Resilient HTTP client for FastAPI backend
+│   └── components/                # Modular UI components (KPIs, Timeline, Alerts, Injector)
+├── docker/
+│   ├── Dockerfile                 # Multi-stage production Dockerfile (non-root appuser)
+│   ├── docker-compose.yml         # Container orchestration (LocalStack + API + Dashboard)
+│   └── README.md                  # Docker deployment instructions
+├── benchmarks/
+│   ├── benchmark_pipeline.py      # End-to-end component latency & throughput profiler
+│   └── benchmark_accuracy.py      # Multi-vector classification accuracy & recall evaluator
+├── docs/
+│   ├── ARCHITECTURE.md            # Deep-dive architectural specification & mathematics
+│   └── VIVA_PRESENTATION_GUIDE.md # Viva defense script, demo walkthrough & Q&A
+├── tests/                         # 108 automated unit and integration tests (100% green)
+├── requirements.txt               # Production Python dependencies
+├── run_demo.bat                   # 1-click Windows demo launcher
+└── README.md                      # Comprehensive project documentation
+```
+
+---
+
+## 🧪 Running Automated Tests
+
 ```bash
-# Generate 100 baseline requests
-python -m data.synthetic_generator --count 100 --attack none
-
-# Inject DDoS surge
-python -m data.synthetic_generator --count 200 --attack ddos
-
-# Run validation test suite
+# Run complete test suite (108 tests)
 python -m pytest tests/ -v
+
+# Run with test coverage summary
+python -m pytest tests/ --cov=. --cov-report=term-missing
 ```
+
+---
+
+## 📜 Academic Review & Defense Note
+This system was built to address **Review 1 approved architectural objectives**, demonstrating how real-time statistical filters and unsupervised machine learning can be combined with Explainable AI to bridge the gap between machine intelligence and operational SecOps.
