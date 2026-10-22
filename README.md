@@ -4,7 +4,7 @@
 [![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.14-blue.svg)](#)
 [![Architecture](https://img.shields.io/badge/Architecture-Dual--Tier%20+%20SHAP%20XAI-orange.svg)](#)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20REST-009688.svg)](#)
-[![Streamlit](https://img.shields.io/badge/Website-Streamlit%20(100%25%20Offline)-FF4B4B.svg)](#)
+[![Website](https://img.shields.io/badge/Website-Streamlit%20(100%25%20Offline)-FF4B4B.svg)](#)
 [![Docker](https://img.shields.io/badge/Containers-Docker%20Compose-2496ED.svg)](#)
 [![AWS](https://img.shields.io/badge/Cloud-LocalStack%20%2F%20AWS%20Boto3-232F3E.svg)](#)
 
@@ -12,13 +12,16 @@ A production-ready, event-driven temporal anomaly detection pipeline that ingest
 
 ---
 
-## 🌐 Modern Localhost Website & 100% Offline Testing Workbench
+## 🌐 Modern Localhost Website & 100% Offline Interactive Workbench
 
-The project features a **modern, offline-first website (Localhost:8501)** that runs with **zero internet connection** and zero cloud dependencies:
+The project features a **modern, minimal website on `localhost:8501`** that runs **100% offline** with **zero internet connection** and zero cloud dependencies:
 
 ```bash
-# 1-Click Launch on Windows:
+# 1-Click Launch on Windows (Command Prompt / Explorer):
 run_website.bat
+
+# Or Windows PowerShell:
+.\run_website.ps1
 
 # Or Linux / macOS:
 chmod +x run_website.sh && ./run_website.sh
@@ -27,19 +30,19 @@ chmod +x run_website.sh && ./run_website.sh
 streamlit run dashboard/app.py --server.port 8501
 ```
 
-### 🧪 Live Anomaly Testing Workbench: User Input vs. Detection Output
-The front-and-center tab provides a side-by-side interactive testing workbench:
-- **Left Column (What the User is Inputting)**:
-  - **Quick Scenario Presets**: 🟢 Nominal Traffic, 🌊 DDoS HTTP Flood, 🔑 Credential Stuffing, 🕵️ Off-Hour Probing, 💾 Data Exfiltration.
-  - **Fine-Grained Telemetry Sliders**: Requests ($5 - 4,000$), Rates ($0.1 - 70\text{ req/s}$), Unique IPs, Error rates (4xx/5xx), Mean & P95 Latency, Outbound Payload Bytes, Auth Failures, and Off-Hour Activity Ratio.
-  - **Input vs. Diurnal Baseline Comparison Table**: Side-by-side breakdown showing input metrics vs expected baseline and relative deviation ($\times$).
-  - **Raw Wire JSON Payload Inspector**: Collapsible real-time JSON window schema viewer.
-- **Right Column (What the Pipeline Outputs & Results)**:
-  - **Glowing Verdict Card**: Dynamic Red Alert Banner (Threat Detected with Severity & Confidence) or Green Nominal Pass Banner.
-  - **Dual-Tier Forensic Diagnostics**: Tier 1 Z-Score / MAD fast-path verdict ($0.43\text{ ms}$) alongside Tier 2 Isolation Forest multivariate AI verdict ($9.26\text{ ms}$).
-  - **Plotly Feature Attribution Chart**: Real-time horizontal bar chart displaying SHAP importance scores ($\phi_i$) for the top anomalous features.
-  - **Plain-English AI Incident Narrative**: Semantic reasoning explaining why the anomaly occurred.
-  - **Automated Cloud Mitigation Playbooks**: Targeted remediation steps (e.g. AWS WAF rate-limiting, IAM session revocation, VPC egress isolation).
+### 🎯 Interactive Lab: User Input ➔ AI Output Breakdown
+The primary tab of the website provides a side-by-side interactive threat simulation lab:
+- **📥 Left Column (What You Give as Input as a User)**:
+  - **Attack Vector Presets**: 🟢 Nominal Baseline, 🌊 Volumetric DDoS HTTP Flood, 🔑 Credential Stuffing & Auth Flooding, 🕵️ Off-Hour Reconnaissance Probing, 💾 Massive Data Exfiltration.
+  - **Fine-Tuning Telemetry Sliders**: Request Volume ($5 - 5,000$), Error Counts ($4\text{xx} / 5\text{xx}$), Latency P95 ($10 - 1500\text{ ms}$), Unique Source IPs, Auth Failures ($401/403$), Off-Hour Activity Ratio ($0.0 - 1.0$), and Response Bytes.
+  - **Formatted Telemetry Vector Card**: Real-time structured telemetry payload dispatched to the detection models.
+- **📤 Right Column (What You Get as Output from the AI System)**:
+  - **Detection Verdict Banner**: Glowing Red Threat Alert (Hypothesis, Severity, Confidence Score) or Green Nominal Workload pass.
+  - **Dual-Tier Multi-Engine Arbitration**: Side-by-side diagnostic cards for **Tier 1 (Statistical MAD / EWMA)** and **Tier 2 (Unsupervised Isolation Forest)**.
+  - **Explainable AI (XAI) Attribution**: Horizontal Plotly bar chart rendering real-time additive SHAP importance values ($\phi_i$) showing exactly which telemetric dimensions triggered the alert.
+  - **Semantic AI Reasoning Narrative**: Clear plain-English threat summary.
+  - **Automated Cloud Mitigation Playbook**: Concrete remediation actions (AWS WAF rate limits, IAM credential revocation, VPC isolation).
+  - **Raw Machine-Readable JSON Output**: Complete serialized inference payload.
 
 ---
 
@@ -201,7 +204,8 @@ temporal-threat-detector/
 ├── dashboard/
 │   ├── app.py                     # Streamlit live visualizer & operational UI
 │   ├── api_client.py              # Resilient HTTP client for FastAPI backend
-│   └── components/                # Modular UI components (KPIs, Timeline, Alerts, Injector)
+│   ├── embedded_engine.py         # 100% Offline in-memory ML & SHAP detection pipeline
+│   └── components/                # Modular UI components (Interactive Lab, KPIs, Timeline, Alerts, Injector)
 ├── docker/
 │   ├── Dockerfile                 # Multi-stage production Dockerfile (non-root appuser)
 │   ├── docker-compose.yml         # Container orchestration (LocalStack + API + Dashboard)
@@ -215,6 +219,7 @@ temporal-threat-detector/
 ├── tests/                         # 114 automated unit and integration tests (100% green)
 ├── requirements.txt               # Production Python dependencies
 ├── run_website.bat                # 1-click 100% Offline Localhost Website launcher (Windows)
+├── run_website.ps1                # 1-click 100% Offline Localhost Website launcher (PowerShell)
 ├── run_website.sh                 # 1-click 100% Offline Localhost Website launcher (Linux/macOS)
 ├── run_demo.bat                   # 1-click Windows demo launcher
 └── README.md                      # Comprehensive project documentation

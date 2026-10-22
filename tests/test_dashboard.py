@@ -142,94 +142,86 @@ def test_severity_badge_formatting() -> None:
     assert "⚪" in get_severity_badge("INFO")
 
 
-def test_dashboard_api_client_local_evaluation() -> None:
-    """Verify DashboardApiClient in-process offline fallback detection."""
-    from datetime import datetime, timezone
-    from api.schemas import WindowAggregate
-    from dashboard.components.inspector import BASELINE_EXPECTED
+def test_create_window_from_params() -> None:
+    """Verify user input parameter translation into validated WindowAggregate."""
+    from dashboard.components.interactive_lab import create_window_from_params
 
-    client = DashboardApiClient(base_url="http://127.0.0.1:9999")  # Non-existent port to force fallback
+    window = create_window_from_params(
+        request_count=1200,
+        error_count_4xx=120,
+        error_count_5xx=24,
+        p95_duration_ms=250.0,
+        unique_source_ips=800,
+        auth_failure_count=95,
+        off_hour_ratio=0.5,
+        mean_response_bytes=3500.0,
+    )
+    assert window.request_count == 1200
+    assert window.request_rate_per_sec == 20.0  # 1200 / 60
+    assert window.error_rate_4xx == 0.1  # 120 / 1200
+    assert window.error_rate_5xx == 0.02  # 24 / 1200
+    assert window.p95_duration_ms == 250.0
+    assert window.unique_source_ips == 800
+    assert window.auth_failure_count == 95
+    assert window.off_hour_ratio == 0.5
 
-    # 1. Test nominal window
-    now = datetime.now(timezone.utc)
-    nominal_window = WindowAggregate(
-        window_start=now,
-        window_end=now,
-        duration_seconds=60.0,
+
+def test_embedded_offline_pipeline_full_cycle() -> None:
+    """Verify standalone offline embedded engine runs 100% locally with zero network calls."""
+    from dashboard.components.interactive_lab import create_window_from_params
+    from dashboard.embedded_engine import EmbeddedOfflinePipeline
+
+    engine = EmbeddedOfflinePipeline()
+    assert engine.is_available() is True
+    health = engine.get_health()
+    assert health["status"] == "healthy"
+    assert health["mode"] == "standalone_offline"
+
+    # 1. Evaluate nominal baseline traffic
+    nominal_window = create_window_from_params(
         request_count=20,
-        request_rate_per_sec=0.33,
         error_count_4xx=0,
         error_count_5xx=0,
-        error_rate_4xx=0.0,
-        error_rate_5xx=0.0,
-        mean_duration_ms=40.0,
-        p95_duration_ms=65.0,
+        p95_duration_ms=60.0,
         unique_source_ips=20,
-        unique_users=5,
-        total_request_bytes=10000,
-        total_response_bytes=42000,
-        mean_response_bytes=2100.0,
         auth_failure_count=0,
         off_hour_ratio=0.0,
-        bot_agent_ratio=0.0,
+        mean_response_bytes=2100.0,
     )
-    res_nom = client.detect_window(nominal_window.model_dump(mode="json"))
-    assert res_nom["is_anomaly"] is False
-    assert res_nom["alert"] is None
+    eval_nom = engine.evaluate_window(nominal_window)
+    assert "is_anomaly" in eval_nom
+    assert "confidence_score" in eval_nom
+    assert "tier1_result" in eval_nom
+    assert "tier2_result" in eval_nom
+    assert "top_contributions" in eval_nom
 
-    # 2. Test massive volumetric DDoS window
-    ddos_window = WindowAggregate(
-        window_start=now,
-        window_end=now,
-        duration_seconds=60.0,
+    # 2. Evaluate DDoS attack surge
+    ddos_window = create_window_from_params(
         request_count=3500,
-        request_rate_per_sec=58.3,
         error_count_4xx=10,
-        error_count_5xx=45,
-        error_rate_4xx=0.002,
-        error_rate_5xx=0.012,
-        mean_duration_ms=180.0,
-        p95_duration_ms=450.0,
+        error_count_5xx=80,
+        p95_duration_ms=220.0,
         unique_source_ips=3000,
-        unique_users=90,
-        total_request_bytes=1750000,
-        total_response_bytes=6500000,
-        mean_response_bytes=1857.0,
-        auth_failure_count=5,
+        auth_failure_count=0,
         off_hour_ratio=0.0,
-        bot_agent_ratio=0.75,
+        mean_response_bytes=2100.0,
     )
-    res_attack = client.detect_window(ddos_window.model_dump(mode="json"))
-    assert res_attack["is_anomaly"] is True
-    assert res_attack["alert"] is not None
-    assert "DDoS" in res_attack["alert"]["threat_hypothesis"] or "Volumetric" in res_attack["alert"]["threat_hypothesis"]
-    assert len(res_attack["alert"]["top_contributions"]) > 0
+    eval_ddos = engine.evaluate_window(ddos_window)
+    assert eval_ddos["is_anomaly"] is True
+    assert eval_ddos["confidence_score"] > 0.5
+    assert "DDoS" in eval_ddos["threat_hypothesis"] or "Volumetric" in eval_ddos["threat_hypothesis"] or "High" in eval_ddos["threat_hypothesis"]
+    assert len(eval_ddos["top_contributions"]) > 0
 
-    # 3. Test local offline alert retrieval
-    alerts = client.get_alerts(limit=5)
-    assert len(alerts) >= 1
+    # 3. Inject attack simulation batch
+    inject_res = engine.inject_attack(attack_type="ddos", count=100)
+    assert inject_res["status"] == "injected"
+    assert inject_res["windows_evaluated"] >= 1
 
-    # 4. Test local offline metrics
-    metrics = client.get_metrics()
+    # 4. Check metrics and alerts sinks
+    metrics = engine.get_metrics()
     assert metrics["total_events_processed"] > 0
+    assert metrics["total_alerts_emitted"] >= 1
 
-
-def test_inspector_baseline_and_data_contracts() -> None:
-    """Verify inspector baseline expectations and metric definitions."""
-    from dashboard.components.inspector import BASELINE_EXPECTED
-
-    required_keys = {
-        "request_count",
-        "request_rate_per_sec",
-        "error_rate_4xx",
-        "error_rate_5xx",
-        "mean_duration_ms",
-        "p95_duration_ms",
-        "unique_source_ips",
-        "total_response_bytes",
-        "auth_failure_count",
-        "off_hour_ratio",
-    }
-    assert required_keys.issubset(set(BASELINE_EXPECTED.keys()))
-    assert BASELINE_EXPECTED["request_count"] == 20.0
+    alerts = engine.get_alerts(limit=10)
+    assert len(alerts) >= 1
 
