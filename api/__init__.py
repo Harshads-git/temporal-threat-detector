@@ -1,0 +1,4 @@
+"""Temporal Anomaly & Threat Detector API Package."""
+
+__version__ = "1.0.0"
+__author__ = "Harshads-git"
