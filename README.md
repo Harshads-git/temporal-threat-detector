@@ -1,14 +1,41 @@
 # Temporal Anomaly & Threat Detector for Cloud Workloads
 
-[![Build Status](https://img.shields.io/badge/Build-108%20Tests%20Passing-success.svg)](#)
+[![Build Status](https://img.shields.io/badge/Build-114%20Tests%20Passing-success.svg)](#)
 [![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.14-blue.svg)](#)
 [![Architecture](https://img.shields.io/badge/Architecture-Dual--Tier%20+%20SHAP%20XAI-orange.svg)](#)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20REST-009688.svg)](#)
-[![Streamlit](https://img.shields.io/badge/Dashboard-Streamlit%20UI-FF4B4B.svg)](#)
+[![Streamlit](https://img.shields.io/badge/Dashboard-Streamlit%20UI%20(Offline%20Ready)-FF4B4B.svg)](#)
 [![Docker](https://img.shields.io/badge/Containers-Docker%20Compose-2496ED.svg)](#)
 [![AWS](https://img.shields.io/badge/Cloud-LocalStack%20%2F%20AWS%20Boto3-232F3E.svg)](#)
 
 A production-ready, event-driven temporal anomaly detection pipeline that ingests high-volume cloud telemetry, aggregates rolling sliding time windows, and performs dual-tier threat detection with **Explainable AI (XAI)** attribution for cloud security operations (SecOps).
+
+---
+
+## 🌐 Modern Interactive Website & 100% Offline Threat Lab
+
+The project features a **modern, offline-first web interface** built with Streamlit and Plotly that requires **zero internet connection** and **no separate backend server to run**:
+
+```bash
+# 1-Click Launch (Windows)
+run_website_offline.bat
+
+# Or direct CLI launch:
+streamlit run dashboard/app.py
+```
+
+### 🧪 Live Threat Lab: User Input vs. AI Detection Output
+The landing tab provides an interactive laboratory where users can modify workload telemetry in real-time or select realistic attack scenarios and immediately visualize the dual-tier AI decisions:
+
+- **Interactive Inputs**:
+  - **Quick Scenario Presets**: Nominal Diurnal Workload, Volumetric DDoS Flood, Distributed Credential Stuffing, Off-Hour Reconnaissance, or Massive Data Exfiltration.
+  - **Real-time Telemetry Sliders**: Adjust Request Count ($10 - 2,500$), 4xx/5xx Error Rates ($0.0 - 1.0$), P95 Latency ($10 - 2,000\text{ ms}$), Unique Source IPs ($1 - 1,000$), Auth Failure Rate ($0.0 - 1.0$), and Off-Hour Traffic Ratio ($0.0 - 1.0$).
+- **Visual Representations of Output**:
+  - **Speedometer Gauge**: Visualizes the anomaly score vs. calibrated threshold with color-coded severity regions (Normal $\rightarrow$ Critical).
+  - **8-Dimensional Polar Radar Chart**: Superimposes the user's input against the historical diurnal normal baseline profile to spotlight multidimensional deviations.
+  - **SHAP Waterfall Attribution Chart**: Explains the exact log-odds feature contributions computed by SHAP TreeExplainer, showing why the model arrived at its verdict.
+  - **Ranked Feature Deviation Table**: Quantifies observed value, baseline expected mean, delta percentage, and SHAP importance rank.
+  - **Automated Cloud Mitigation Playbook**: Prescribes ready-to-execute AWS WAF rules, IAM quarantines, and VPC routing controls for the detected threat.
 
 ---
 
@@ -181,8 +208,9 @@ temporal-threat-detector/
 ├── docs/
 │   ├── ARCHITECTURE.md            # Deep-dive architectural specification & mathematics
 │   └── VIVA_PRESENTATION_GUIDE.md # Viva defense script, demo walkthrough & Q&A
-├── tests/                         # 108 automated unit and integration tests (100% green)
+├── tests/                         # 114 automated unit and integration tests (100% green)
 ├── requirements.txt               # Production Python dependencies
+├── run_website_offline.bat        # 1-click Offline Website & Threat Lab launcher
 ├── run_demo.bat                   # 1-click Windows demo launcher
 └── README.md                      # Comprehensive project documentation
 ```
@@ -192,7 +220,7 @@ temporal-threat-detector/
 ## 🧪 Running Automated Tests
 
 ```bash
-# Run complete test suite (108 tests)
+# Run complete test suite (114 tests)
 python -m pytest tests/ -v
 
 # Run with test coverage summary
