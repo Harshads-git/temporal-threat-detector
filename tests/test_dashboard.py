@@ -142,64 +142,94 @@ def test_severity_badge_formatting() -> None:
     assert "⚪" in get_severity_badge("INFO")
 
 
-def test_offline_threat_engine_nominal_and_attack_evaluation() -> None:
-    """Verify OfflineThreatEngine operates 100% in-memory offline without network or server."""
-    from dashboard.embedded_engine import OfflineThreatEngine
+def test_dashboard_api_client_local_evaluation() -> None:
+    """Verify DashboardApiClient in-process offline fallback detection."""
+    from datetime import datetime, timezone
+    from api.schemas import WindowAggregate
+    from dashboard.components.inspector import BASELINE_EXPECTED
 
-    engine = OfflineThreatEngine(seed=42)
-    assert engine.ai_detector is not None
-    assert len(engine.baseline_feature_means) > 0
+    client = DashboardApiClient(base_url="http://127.0.0.1:9999")  # Non-existent port to force fallback
 
-    # 1. Evaluate nominal window from baseline
-    nominal_window = engine.baseline_windows[0]
-    res_nominal = engine.evaluate_window(nominal_window)
-    assert "verdict" in res_nominal
-    assert "input_features" in res_nominal
-    assert "baseline_expected" in res_nominal
-    assert "top_contributions" in res_nominal
-
-    # 2. Evaluate injected ddos attack
-    res_attack = engine.inject_synthetic_attack("ddos", count=250)
-    assert res_attack["is_anomaly"] is True
-    assert res_attack["verdict"] == "THREAT DETECTED"
-    assert "DDoS" in res_attack["threat_hypothesis"] or "Volumetric" in res_attack["threat_hypothesis"]
-    assert len(res_attack["top_contributions"]) > 0
-
-
-def test_threat_lab_visual_chart_generators() -> None:
-    """Verify interactive threat lab plotly chart generation helpers."""
-    import plotly.graph_objects as go
-    from dashboard.components.interactive_lab import (
-        render_threat_gauge,
-        render_feature_radar_chart,
-        render_shap_waterfall_chart,
+    # 1. Test nominal window
+    now = datetime.now(timezone.utc)
+    nominal_window = WindowAggregate(
+        window_start=now,
+        window_end=now,
+        duration_seconds=60.0,
+        request_count=20,
+        request_rate_per_sec=0.33,
+        error_count_4xx=0,
+        error_count_5xx=0,
+        error_rate_4xx=0.0,
+        error_rate_5xx=0.0,
+        mean_duration_ms=40.0,
+        p95_duration_ms=65.0,
+        unique_source_ips=20,
+        unique_users=5,
+        total_request_bytes=10000,
+        total_response_bytes=42000,
+        mean_response_bytes=2100.0,
+        auth_failure_count=0,
+        off_hour_ratio=0.0,
+        bot_agent_ratio=0.0,
     )
+    res_nom = client.detect_window(nominal_window.model_dump(mode="json"))
+    assert res_nom["is_anomaly"] is False
+    assert res_nom["alert"] is None
 
-    # Gauge chart
-    gauge_fig = render_threat_gauge(score=4.5, threshold=3.0, severity="CRITICAL")
-    assert isinstance(gauge_fig, go.Figure)
-    assert "Score" in gauge_fig.data[0].title.text
+    # 2. Test massive volumetric DDoS window
+    ddos_window = WindowAggregate(
+        window_start=now,
+        window_end=now,
+        duration_seconds=60.0,
+        request_count=3500,
+        request_rate_per_sec=58.3,
+        error_count_4xx=10,
+        error_count_5xx=45,
+        error_rate_4xx=0.002,
+        error_rate_5xx=0.012,
+        mean_duration_ms=180.0,
+        p95_duration_ms=450.0,
+        unique_source_ips=3000,
+        unique_users=90,
+        total_request_bytes=1750000,
+        total_response_bytes=6500000,
+        mean_response_bytes=1857.0,
+        auth_failure_count=5,
+        off_hour_ratio=0.0,
+        bot_agent_ratio=0.75,
+    )
+    res_attack = client.detect_window(ddos_window.model_dump(mode="json"))
+    assert res_attack["is_anomaly"] is True
+    assert res_attack["alert"] is not None
+    assert "DDoS" in res_attack["alert"]["threat_hypothesis"] or "Volumetric" in res_attack["alert"]["threat_hypothesis"]
+    assert len(res_attack["alert"]["top_contributions"]) > 0
 
-    # Radar chart
-    obs_dict = {
-        "request_count": 500.0,
-        "error_rate": 0.45,
-        "p95_duration_ms": 320.0,
-        "unique_ips": 120.0,
-        "auth_failure_rate": 0.35,
-        "bytes_transferred": 85000.0,
-        "off_hour_ratio": 0.8,
+    # 3. Test local offline alert retrieval
+    alerts = client.get_alerts(limit=5)
+    assert len(alerts) >= 1
+
+    # 4. Test local offline metrics
+    metrics = client.get_metrics()
+    assert metrics["total_events_processed"] > 0
+
+
+def test_inspector_baseline_and_data_contracts() -> None:
+    """Verify inspector baseline expectations and metric definitions."""
+    from dashboard.components.inspector import BASELINE_EXPECTED
+
+    required_keys = {
+        "request_count",
+        "request_rate_per_sec",
+        "error_rate_4xx",
+        "error_rate_5xx",
+        "mean_duration_ms",
+        "p95_duration_ms",
+        "unique_source_ips",
+        "total_response_bytes",
+        "auth_failure_count",
+        "off_hour_ratio",
     }
-    base_dict = {k: 10.0 for k in obs_dict}
-    radar_fig = render_feature_radar_chart(obs_dict, base_dict)
-    assert isinstance(radar_fig, go.Figure)
-    assert len(radar_fig.data) == 2  # Baseline trace + Current window trace
+    assert required_keys.issubset(set(BASELINE_EXPECTED.keys()))
+    assert BASELINE_EXPECTED["request_count"] == 20.0
 
-    # SHAP Waterfall chart
-    sample_shap = [
-        {"feature_name": "request_count", "shap_value": 0.35},
-        {"feature_name": "error_rate", "shap_value": -0.12},
-    ]
-    waterfall_fig = render_shap_waterfall_chart(sample_shap)
-    assert isinstance(waterfall_fig, go.Figure)
-    assert len(waterfall_fig.data) == 1

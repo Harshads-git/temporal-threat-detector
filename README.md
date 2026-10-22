@@ -4,7 +4,7 @@
 [![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.14-blue.svg)](#)
 [![Architecture](https://img.shields.io/badge/Architecture-Dual--Tier%20+%20SHAP%20XAI-orange.svg)](#)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20REST-009688.svg)](#)
-[![Streamlit](https://img.shields.io/badge/Dashboard-Streamlit%20UI%20(Offline%20Ready)-FF4B4B.svg)](#)
+[![Streamlit](https://img.shields.io/badge/Website-Streamlit%20(100%25%20Offline)-FF4B4B.svg)](#)
 [![Docker](https://img.shields.io/badge/Containers-Docker%20Compose-2496ED.svg)](#)
 [![AWS](https://img.shields.io/badge/Cloud-LocalStack%20%2F%20AWS%20Boto3-232F3E.svg)](#)
 
@@ -12,30 +12,34 @@ A production-ready, event-driven temporal anomaly detection pipeline that ingest
 
 ---
 
-## 🌐 Modern Interactive Website & 100% Offline Threat Lab
+## 🌐 Modern Localhost Website & 100% Offline Testing Workbench
 
-The project features a **modern, offline-first web interface** built with Streamlit and Plotly that requires **zero internet connection** and **no separate backend server to run**:
+The project features a **modern, offline-first website (Localhost:8501)** that runs with **zero internet connection** and zero cloud dependencies:
 
 ```bash
-# 1-Click Launch (Windows)
-run_website_offline.bat
+# 1-Click Launch on Windows:
+run_website.bat
 
-# Or direct CLI launch:
-streamlit run dashboard/app.py
+# Or Linux / macOS:
+chmod +x run_website.sh && ./run_website.sh
+
+# Or direct Python CLI:
+streamlit run dashboard/app.py --server.port 8501
 ```
 
-### 🧪 Live Threat Lab: User Input vs. AI Detection Output
-The landing tab provides an interactive laboratory where users can modify workload telemetry in real-time or select realistic attack scenarios and immediately visualize the dual-tier AI decisions:
-
-- **Interactive Inputs**:
-  - **Quick Scenario Presets**: Nominal Diurnal Workload, Volumetric DDoS Flood, Distributed Credential Stuffing, Off-Hour Reconnaissance, or Massive Data Exfiltration.
-  - **Real-time Telemetry Sliders**: Adjust Request Count ($10 - 2,500$), 4xx/5xx Error Rates ($0.0 - 1.0$), P95 Latency ($10 - 2,000\text{ ms}$), Unique Source IPs ($1 - 1,000$), Auth Failure Rate ($0.0 - 1.0$), and Off-Hour Traffic Ratio ($0.0 - 1.0$).
-- **Visual Representations of Output**:
-  - **Speedometer Gauge**: Visualizes the anomaly score vs. calibrated threshold with color-coded severity regions (Normal $\rightarrow$ Critical).
-  - **8-Dimensional Polar Radar Chart**: Superimposes the user's input against the historical diurnal normal baseline profile to spotlight multidimensional deviations.
-  - **SHAP Waterfall Attribution Chart**: Explains the exact log-odds feature contributions computed by SHAP TreeExplainer, showing why the model arrived at its verdict.
-  - **Ranked Feature Deviation Table**: Quantifies observed value, baseline expected mean, delta percentage, and SHAP importance rank.
-  - **Automated Cloud Mitigation Playbook**: Prescribes ready-to-execute AWS WAF rules, IAM quarantines, and VPC routing controls for the detected threat.
+### 🧪 Live Anomaly Testing Workbench: User Input vs. Detection Output
+The front-and-center tab provides a side-by-side interactive testing workbench:
+- **Left Column (What the User is Inputting)**:
+  - **Quick Scenario Presets**: 🟢 Nominal Traffic, 🌊 DDoS HTTP Flood, 🔑 Credential Stuffing, 🕵️ Off-Hour Probing, 💾 Data Exfiltration.
+  - **Fine-Grained Telemetry Sliders**: Requests ($5 - 4,000$), Rates ($0.1 - 70\text{ req/s}$), Unique IPs, Error rates (4xx/5xx), Mean & P95 Latency, Outbound Payload Bytes, Auth Failures, and Off-Hour Activity Ratio.
+  - **Input vs. Diurnal Baseline Comparison Table**: Side-by-side breakdown showing input metrics vs expected baseline and relative deviation ($\times$).
+  - **Raw Wire JSON Payload Inspector**: Collapsible real-time JSON window schema viewer.
+- **Right Column (What the Pipeline Outputs & Results)**:
+  - **Glowing Verdict Card**: Dynamic Red Alert Banner (Threat Detected with Severity & Confidence) or Green Nominal Pass Banner.
+  - **Dual-Tier Forensic Diagnostics**: Tier 1 Z-Score / MAD fast-path verdict ($0.43\text{ ms}$) alongside Tier 2 Isolation Forest multivariate AI verdict ($9.26\text{ ms}$).
+  - **Plotly Feature Attribution Chart**: Real-time horizontal bar chart displaying SHAP importance scores ($\phi_i$) for the top anomalous features.
+  - **Plain-English AI Incident Narrative**: Semantic reasoning explaining why the anomaly occurred.
+  - **Automated Cloud Mitigation Playbooks**: Targeted remediation steps (e.g. AWS WAF rate-limiting, IAM session revocation, VPC egress isolation).
 
 ---
 
@@ -210,7 +214,8 @@ temporal-threat-detector/
 │   └── VIVA_PRESENTATION_GUIDE.md # Viva defense script, demo walkthrough & Q&A
 ├── tests/                         # 114 automated unit and integration tests (100% green)
 ├── requirements.txt               # Production Python dependencies
-├── run_website_offline.bat        # 1-click Offline Website & Threat Lab launcher
+├── run_website.bat                # 1-click 100% Offline Localhost Website launcher (Windows)
+├── run_website.sh                 # 1-click 100% Offline Localhost Website launcher (Linux/macOS)
 ├── run_demo.bat                   # 1-click Windows demo launcher
 └── README.md                      # Comprehensive project documentation
 ```
